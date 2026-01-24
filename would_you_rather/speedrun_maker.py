@@ -12,7 +12,8 @@ from moviepy import (
     CompositeVideoClip,
     clips_array,
     AudioFileClip,
-    CompositeAudioClip
+    CompositeAudioClip,
+    concatenate_audioclips
 )
 import moviepy.video.fx as vfx
 
@@ -177,11 +178,26 @@ def create_question_segment_v2(q_data, start_time, duration, is_last_one):
     # 注意：v2 中 set_duration, set_start 依然可用，但推荐链式调用
     comp = CompositeVideoClip(layers, size=(W, H)).with_start(start_time).with_duration(duration)
 
-    # 6. 添加倒计时音效 (Tick)
+    # 6. 添加倒计时音效 (Tick) - [修复版逻辑]
     if os.path.exists(SFX_TICK):
-        tick = AudioFileClip(SFX_TICK).with_volume_scaled(0.8).subclipped(0, duration)
-        # 将 tick 加入音频列表
-        audio_layers.insert(0, tick)
+        try:
+            tick = AudioFileClip(SFX_TICK).with_volume_scaled(0.8)
+
+            # === 核心修复：自动循环短音频 ===
+            # 如果音频比需要的时长短，就复制拼接，直到够长为止
+            if tick.duration < duration:
+                # 计算需要循环多少次 (例如 3.0 / 1.46 ≈ 2.05 -> 循环3次)
+                n_loops = int(duration / tick.duration) + 1
+                # 拼接音频
+                tick = concatenate_audioclips([tick] * n_loops)
+
+            # 现在音频足够长了，安全截取
+            tick = tick.subclipped(0, duration)
+
+            # 将 tick 加入音频列表
+            audio_layers.insert(0, tick)
+        except Exception as e:
+            print(f"⚠️ 音频处理警告: {e}")
 
     # 7. 合成音频
     if audio_layers:
@@ -313,7 +329,7 @@ def main():
 
         final = CompositeVideoClip([clip1, clip2, clip3], size=(W, H)).with_duration(10.0)
 
-        output_filename = f"Speedrun_Day{day}.mp4"
+        output_filename = f"target/Speedrun_Day{day}.mp4"
         final.write_videofile(
             output_filename,
             fps=30,

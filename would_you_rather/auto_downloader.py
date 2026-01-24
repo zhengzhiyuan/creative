@@ -4,7 +4,7 @@ from icrawler.builtin import BingImageCrawler
 
 # === 配置 ===
 # 为了规避 Google 的反爬虫，这里使用 Bing 引擎（效果一样好且稳定）
-ROOT_DIR = "assets/sfx/speedrun"
+ROOT_DIR = "assets/speedrun"
 
 # === 14天完整搜索关键词清单 ===
 # 格式: Day: [(Q1A, Q1B), (Q2A, Q2B), (Q3A, Q3B)]

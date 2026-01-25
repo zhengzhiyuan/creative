@@ -1,43 +1,56 @@
 import os
 import random
 import asyncio
-import edge_tts
-import numpy as np  # 新增此行
+import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-# === MoviePy 2.x 导入 ===
+# === MoviePy 2.x 专用导入 ===
 from moviepy import (
     VideoFileClip, ImageClip, ColorClip, TextClip,
     CompositeVideoClip, clips_array, AudioFileClip,
     CompositeAudioClip, concatenate_audioclips,
-    concatenate_videoclips  # <--- 核心修复：必须用这个
+    concatenate_videoclips
 )
 import moviepy.video.fx as vfx
+import edge_tts
 
 # ================= 配置区域 =================
 W, H = 1080, 1920
-COLOR_TOP = (200, 0, 0)
-COLOR_BOTTOM = (0, 0, 200)
-FONT_PATH = "Impact.ttf"
+COLOR_TOP = (200, 0, 0)  # 深红
+COLOR_BOTTOM = (0, 0, 200)  # 深蓝
+FONT_PATH = "Impact.ttf"  # 字体路径
 
+# 音效路径
 SFX_TICK = "assets/sfx/tick.mp3"
 SFX_BOOM = "assets/sfx/boom.mp3"
 
-# === TTS 配置 (关键迭代) ===
-# 推荐声音:
-# "en-US-ChristopherNeural" (男声，类似电影解说)
-# "en-US-AnaNeural" (女声，清晰)
+# TTS 配置 (快语速)
 TTS_VOICE = "en-US-ChristopherNeural"
-TTS_RATE = "+35%"  # 语速加速 35%，制造紧迫感
+TTS_RATE = "+35%"
 
 
-# ================= 工具函数 =================
+# ================= 视觉工具函数 =================
 
-# ... (create_text_img_pil 和 create_half_clip_v2 保持不变，直接复用 v2 的代码) ...
-# 为了节省篇幅，这里省略这两个视觉函数的代码，请确保它们在你的文件中
 def create_text_img_pil(text, size, color='white', stroke_color='black'):
+    """使用 PIL 生成高质量描边文字"""
     img = Image.new("RGBA", size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
+
+    # 处理颜色值
+    if color == 'white':
+        color = (255, 255, 255)
+    elif color == 'red':
+        color = (255, 0, 0)
+    elif color == '#FFFF00':
+        color = (255, 255, 0)
+    elif isinstance(color, str) and color.startswith('#'):
+        # 处理十六进制颜色
+        hex_color = color.lstrip('#')
+        color = tuple(int(hex_color[i:i + 2], 16) for i in (0, 2, 4))
+
+    if stroke_color == 'black':
+        stroke_color = (0, 0, 0)
+
     try:
         font = ImageFont.truetype(FONT_PATH, 100)
     except:
@@ -49,123 +62,162 @@ def create_text_img_pil(text, size, color='white', stroke_color='black'):
     return np.array(img)
 
 
-def create_half_clip_v2(img_path, text, color_rgb, is_top=True):
+def create_half_clip(img_path, text, color_rgb, is_top=True):
+    """生成半屏画面 (带颜色滤镜)"""
     h_half = H // 2
+
+    # 1. 加载图片 & 填充
     if os.path.exists(img_path):
         img = ImageClip(img_path)
-
+        # 模拟 Cover 模式缩放
         ratio_img = img.w / img.h
         ratio_target = W / h_half
         if ratio_img < ratio_target:
             img = img.with_effects([vfx.Resize(width=W)])
         else:
             img = img.with_effects([vfx.Resize(height=h_half)])
+        # 居中裁剪
         img = img.with_effects([vfx.Crop(width=W, height=h_half, x_center=img.w / 2, y_center=img.h / 2)])
-        # 色彩增强 (V1.5 迭代)
-        img = img.with_effects([vfx.LumContrast(contrast=1.2)]) # 需确认MoviePy版本是否支持此写法
     else:
+        # 兜底纯色
+        print(f"⚠️ 图片缺失: {img_path}")
         img = ColorClip(size=(W, h_half), color=(50, 50, 50))
 
+    # 2. 染色滤镜 (Tint)
     tint = ColorClip(size=(W, h_half), color=color_rgb).with_opacity(0.2)
+
+    # 3. 文字
     txt_arr = create_text_img_pil(text, (W, 200))
     y_pos = h_half - 250 if is_top else 50
     txt_clip = ImageClip(txt_arr).with_position(('center', y_pos))
+
     return CompositeVideoClip([img, tint, txt_clip], size=(W, h_half))
 
 
-# ================= 核心异步逻辑 =================
+# ================= 特效工具函数 (Juice) =================
 
-async def generate_tts_audio(text, filename):
-    """使用 Edge-TTS 生成加速语音"""
+def create_flash_overlay(start_time, duration=0.15):
+    """白闪特效图层"""
+    return ColorClip(size=(W, H), color=(255, 255, 255)) \
+        .with_opacity(0.5) \
+        .with_start(start_time) \
+        .with_duration(duration)
+
+
+def apply_shake_effect(clip, impact_time, duration=0.3, magnitude=20):
+    """
+    【无黑屏震动】使用 numpy.roll 进行像素平移
+    """
+    # 1. 先放大 5% 防止边缘黑边
+    clip = clip.with_effects([vfx.Resize(1.05)])
+
+    def shake_transform(get_frame, t):
+        frame = get_frame(t)
+        # 仅在冲击时间内震动
+        if impact_time <= t <= impact_time + duration:
+            dx = random.randint(-magnitude, magnitude)
+            dy = random.randint(-magnitude, magnitude)
+            # 循环位移 (效率高且不黑屏)
+            frame = np.roll(frame, dy, axis=0)
+            frame = np.roll(frame, dx, axis=1)
+        return frame
+
+    return clip.transform(shake_transform)
+
+
+# ================= 核心生成逻辑 =================
+
+async def generate_tts(text, filename):
     communicate = edge_tts.Communicate(text, TTS_VOICE, rate=TTS_RATE)
     await communicate.save(filename)
     return filename
 
 
-async def create_question_segment_v3(q_data, start_time, duration, is_last_one, temp_id):
-    """
-    生成单题片段 (包含 TTS)
-    temp_id: 用于区分临时文件
-    """
-    # 1. 画面生成 (同 v2)
-    top_part = create_half_clip_v2(q_data['img_a'], q_data['opt_a'], COLOR_TOP, True)
-    bot_part = create_half_clip_v2(q_data['img_b'], q_data['opt_b'], COLOR_BOTTOM, False)
-    screen = clips_array([[top_part], [bot_part]])
+async def create_segment(q_data, duration, is_last, temp_id):
+    """生成单个问题片段 (含画面、TTS、音效、特效)"""
 
-    # 白闪特效 (Visual Flash)
-    flash = ColorClip(size=(W, H), color=(255, 255, 255)).with_duration(0.15).with_opacity(0.5).with_start(0)
+    # 1. 基础画面合成
+    top = create_half_clip(q_data['img_a'], q_data['opt_a'], COLOR_TOP, True)
+    bot = create_half_clip(q_data['img_b'], q_data['opt_b'], COLOR_BOTTOM, False)
+    screen = clips_array([[top], [bot]])
 
-    vs_bg = ColorClip(size=(1920, 10), color=(255, 255, 255)).with_position(('center', 'center'))
-    layers = [screen, vs_bg, flash]
-    audio_layers = []
+    vs_line = ColorClip(size=(1920, 10), color=(255, 255, 255)).with_position(('center', 'center'))  # 修复颜色
 
-    # 2. TTS 生成 (新增!)
-    # 文案逻辑: "Option A or Option B?"
-    tts_text = f"{q_data['opt_a']} or {q_data['opt_b']}?"
-    if is_last_one:
-        tts_text += " Choose Now!"
+    layers = [screen, vs_line]
+    audio_tracks = []
 
-    tts_filename = f"temp_tts_{temp_id}.mp3"
-    await generate_tts_audio(tts_text, tts_filename)
+    # 确定冲击时间点 (Impact Time)
+    impact_time = duration * 0.6 if not is_last else 0.5
 
-    if os.path.exists(tts_filename):
-        tts_clip = AudioFileClip(tts_filename).with_start(0)  # 一开始就读
-        # 确保 TTS 不会超过视频片段时长 (虽然加速后一般很短)
-        if tts_clip.duration > duration:
-            tts_clip = tts_clip.subclipped(0, duration)
-        audio_layers.append(tts_clip)
+    # 2. TTS 生成
+    # 文案: "Option A or Option B?" / "Option A or Option B? Choose Now!"
+    text = f"{q_data['opt_a']} or {q_data['opt_b']}?"
+    if is_last: text += " Choose Now!"
 
-    # 3. 结果展示 (同 v2)
-    if not is_last_one:
-        reveal_time = duration * 0.6
+    tts_file = f"temp_tts_{temp_id}.mp3"
+    await generate_tts(text, tts_file)
+
+    if os.path.exists(tts_file):
+        tts = AudioFileClip(tts_file).with_start(0)
+        # 防止 TTS 超过视频长度
+        if tts.duration > duration: tts = tts.subclipped(0, duration)
+        audio_tracks.append(tts)
+
+    # 3. 结果/陷阱展示
+    if not is_last:
+        # 显示百分比
         per_a = f"{q_data['per_a']}%"
         per_b = f"{100 - q_data['per_a']}%"
-
         img_a = create_text_img_pil(per_a, (400, 150), color='#FFFF00')
         img_b = create_text_img_pil(per_b, (400, 150), color='#FFFF00')
 
-        txt_a = ImageClip(img_a).with_position(('center', 400)).with_start(reveal_time)
-        txt_b = ImageClip(img_b).with_position(('center', 1400)).with_start(reveal_time)
-        layers.extend([txt_a, txt_b])
+        layers.append(ImageClip(img_a).with_position(('center', 400)).with_start(impact_time))
+        layers.append(ImageClip(img_b).with_position(('center', 1400)).with_start(impact_time))
 
+        # Boom 音效
         if os.path.exists(SFX_BOOM):
-            boom = AudioFileClip(SFX_BOOM).with_start(reveal_time).with_volume_scaled(0.8)
-            audio_layers.append(boom)
+            boom = AudioFileClip(SFX_BOOM).with_start(impact_time).with_volume_scaled(0.8)
+            audio_tracks.append(boom)
     else:
         # 最后一题陷阱
-        # 建议使用之前说的 "assets/ui/question_marks.png" 替代代码画图
         img_bait = create_text_img_pil("???", (400, 150), color='red')
         img_cta = create_text_img_pil("CHOOSE NOW!", (800, 150), color='white')
-        bait = ImageClip(img_bait).with_position('center').with_start(0.5)
-        cta = ImageClip(img_cta).with_position(('center', 1600)).with_start(0.5)
-        layers.extend([bait, cta])
 
-    # 4. 合成片段
-    comp = CompositeVideoClip(layers, size=(W, H)).with_start(start_time).with_duration(duration)
+        layers.append(ImageClip(img_bait).with_position('center').with_start(impact_time))
+        layers.append(ImageClip(img_cta).with_position(('center', 1600)).with_start(impact_time))
 
-    # 5. 音效混合 (TTS + Tick)
+    # 4. 加入白闪 (Flash)
+    layers.append(create_flash_overlay(impact_time))
+
+    # 5. 初步合成
+    comp = CompositeVideoClip(layers, size=(W, H)).with_duration(duration)
+
+    # 6. 加入震动 (Shake) - 对整体应用
+    comp = apply_shake_effect(comp, impact_time, duration=0.3)
+
+    # 7. 加入 Tick 倒计时 (循环填补)
     if os.path.exists(SFX_TICK):
-        tick = AudioFileClip(SFX_TICK).with_volume_scaled(0.6)  # 稍微调小Tick，凸显人声
+        tick = AudioFileClip(SFX_TICK).with_volume_scaled(0.6)
         if tick.duration < duration:
-            n_loops = int(duration / tick.duration) + 1
-            tick = concatenate_audioclips([tick] * n_loops)
+            loops = int(duration / tick.duration) + 1
+            tick = concatenate_audioclips([tick] * loops)
         tick = tick.subclipped(0, duration)
-        audio_layers.insert(0, tick)
+        audio_tracks.insert(0, tick)
 
-    if audio_layers:
-        comp = comp.with_audio(CompositeAudioClip(audio_layers))
+    # 8. 合成音频
+    if audio_tracks:
+        comp = comp.with_audio(CompositeAudioClip(audio_tracks))
 
-    return comp, tts_filename
+    return comp, tts_file
 
-def get_day_data(day_index):
-    """
-    获取第 day_index (1-14) 天的题目数据
-    自动生成图片路径
-    """
-    base_path = f"assets/speedrun/day{day_index}"
 
-    # === 14天题库总表 ===
-    all_questions = {
+# ================= 主程序 =================
+
+def get_day_data(day_idx):
+    """获取数据结构，路径自动映射"""
+    # 示例数据：Day 1
+    # 实际使用时，你可以把 14 天的数据字典放这里
+    all_data = {
         1: [  # Day 1: Classic (经典)
             ("RICH", "HANDSOME", 76),
             ("FLY", "INVISIBLE", 64),
@@ -238,44 +290,48 @@ def get_day_data(day_index):
         ]
     }
 
-    questions = all_questions.get(day_index, [])
-    formatted_data = []
+    if day_idx not in all_data: return None
 
-    for i, q in enumerate(questions):
-        q_idx = i + 1
-        formatted_data.append({
-            "opt_a": q[0],
-            "img_a": os.path.join(base_path, f"q{q_idx}_a.jpg"),
-            "opt_b": q[1],
-            "img_b": os.path.join(base_path, f"q{q_idx}_b.jpg"),
-            "per_a": q[2]
-        })
+    raw = all_data[day_idx]
+    base = f"assets/speedrun/day{day_idx}"
 
-    return formatted_data
+    return [
+        {"opt_a": raw[0][0], "img_a": f"{base}/q1_a.jpg", "opt_b": raw[0][1], "img_b": f"{base}/q1_b.jpg",
+         "per_a": raw[0][2]},
+        {"opt_a": raw[1][0], "img_a": f"{base}/q2_a.jpg", "opt_b": raw[1][1], "img_b": f"{base}/q2_b.jpg",
+         "per_a": raw[1][2]},
+        {"opt_a": raw[2][0], "img_a": f"{base}/q3_a.jpg", "opt_b": raw[2][1], "img_b": f"{base}/q3_b.jpg",
+         "per_a": raw[2][2]},
+    ]
 
 
-async def main_async(day_data, day):
-    # 示例数据 (请替换为你的 get_day_data 逻辑)
-    print(f"🚀 正在生成带Day{day} TTS 的极速流视频...")
+async def main_async(DAY):
+    print(f"🚀 开始生成 Day {DAY} 极速流视频...")
 
-    temp_files = []
+    data = get_day_data(DAY)
+    if not data:
+        print("❌ 没有找到数据")
+        return
 
-    # 并发生成三个片段
-    # Q1: 3s | Q2: 3s | Q3: 4s
-    task1 = create_question_segment_v3(day_data[0], 0, 3.0, False, "q1")
-    task2 = create_question_segment_v3(day_data[1], 3.0, 3.0, False, "q2")
-    task3 = create_question_segment_v3(day_data[2], 6.0, 4.0, True, "q3")
+    # 并发生成 3 个片段
+    # Q1: 3s | Q2: 3s | Q3: 4s (最后一题稍微长一点让用户反应)
+    tasks = [
+        create_segment(data[0], 3.0, False, "q1"),
+        create_segment(data[1], 3.0, False, "q2"),
+        create_segment(data[2], 4.0, True, "q3")
+    ]
 
-    results = await asyncio.gather(task1, task2, task3)
+    results = await asyncio.gather(*tasks)
 
-    clips = [res[0] for res in results]
-    temp_files = [res[1] for res in results]
+    clips = [r[0] for r in results]
+    temp_files = [r[1] for r in results]
 
-    final = concatenate_videoclips(clips, method="compose")
+    # 线性拼接 (保证音画同步)
+    final_video = concatenate_videoclips(clips, method="compose")
 
-    output_filename = f"target/Day{day}_TTS_Speedrun_v3.mp4"
-    final.write_videofile(
-        output_filename,
+    out_file = f"target/Speedrun_Day{DAY}_v3.mp4"
+    final_video.write_videofile(
+        out_file,
         fps=30,
         codec='libx264',
         audio_codec='aac',
@@ -283,23 +339,17 @@ async def main_async(day_data, day):
         preset='ultrafast'
     )
 
-    print("🧹 清理临时音频文件...")
+    # 清理临时 TTS 文件
     for f in temp_files:
-        if os.path.exists(f):
-            os.remove(f)
+        if os.path.exists(f): os.remove(f)
 
-    print(f"✅ 完成！文件: {output_filename}")
+    print(f"✅ 搞定！输出文件: {out_file}")
 
 
 def main():
     DAYS_TO_GENERATE = range(1, 15)
-    # DAYS_TO_GENERATE = [1]
-
-    print(f"🚀 准备生成 {len(DAYS_TO_GENERATE)} 个极速流视频...")
-
     for day in DAYS_TO_GENERATE:
-        day_data = get_day_data(day)
-        asyncio.run(main_async(day_data,day))
+        asyncio.run(main_async(day))
 
 
 if __name__ == "__main__":

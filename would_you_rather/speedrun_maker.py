@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
+from moviepy.video.fx import LumContrast
 
 # === MoviePy 2.x 专用导入方式 ===
 from moviepy import (
@@ -86,6 +87,8 @@ def create_half_clip_v2(img_path, text, color_rgb, is_top=True, duration=3.0):
     # 1. 加载图片 & 填充半屏
     if os.path.exists(img_path):
         img = ImageClip(img_path)
+        # 增加对比度 (1.2) 和 饱和度 (如果不方便调饱和度，至少调对比度)
+        img = img.with_effects([vfx.LumContrast(contrast=1.2)])
 
         # 计算缩放比例以填满区域 (Cover 模式)
         ratio_img = img.w / img.h
@@ -178,6 +181,8 @@ def create_question_segment_v2(q_data, start_time, duration, is_last_one):
     # 注意：v2 中 set_duration, set_start 依然可用，但推荐链式调用
     comp = CompositeVideoClip(layers, size=(W, H)).with_start(start_time).with_duration(duration)
 
+    comp = add_flash_effect(comp)
+
     # 6. 添加倒计时音效 (Tick) - [修复版逻辑]
     if os.path.exists(SFX_TICK):
         try:
@@ -203,6 +208,8 @@ def create_question_segment_v2(q_data, start_time, duration, is_last_one):
     if audio_layers:
         comp_audio = CompositeAudioClip(audio_layers)
         comp = comp.with_audio(comp_audio)
+
+
 
     return comp
 
@@ -303,12 +310,18 @@ def get_day_data(day_index):
 
     return formatted_data
 
+def add_flash_effect(clip):
+    """给片段开头加一个极短的白闪"""
+    # 创建一个 0.15秒 的白色片段 - 使用 RGB 值替代字符串
+    flash = ColorClip(size=(W, H), color=(255, 255, 255)).with_duration(0.15).with_opacity(0.6)
+    # 叠加在原片段开头
+    return CompositeVideoClip([clip, flash.with_start(0)])
 
 def main():
     # === 批量生成设置 ===
     # 你可以改为 range(1, 15) 一次生成所有，或者指定某一天
-    DAYS_TO_GENERATE = [1]
-    # DAYS_TO_GENERATE = range(1, 15)
+    # DAYS_TO_GENERATE = [1]
+    DAYS_TO_GENERATE = range(2, 15)
 
     print(f"🚀 准备生成 {len(DAYS_TO_GENERATE)} 个极速流视频...")
 

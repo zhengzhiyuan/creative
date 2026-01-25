@@ -19,6 +19,8 @@ import edge_tts
 FULL_W, FULL_H = 1080, 1920
 # 上半部分尺寸 (WYR 内容区)
 TOP_H = 960
+# 上半屏里，红蓝各占 480
+H_QUARTER = 480
 
 COLOR_TOP = (200, 0, 0)
 COLOR_BOTTOM = (0, 0, 200)
@@ -33,32 +35,43 @@ TTS_RATE = "+40%"  # 语速再快一点，配合跑酷
 # ================= 辅助函数 =================
 
 # 1. 随机获取一个游戏片段
-def get_random_gameplay_clip(duration):
+def get_gameplay_clip(duration):
+    """获取下半屏游戏素材 (强制填满 1080x960)"""
     game_dir = "assets/gameplay"
-    files = [f for f in os.listdir(game_dir) if f.endswith(".mp4")]
+    if not os.path.exists(game_dir): os.makedirs(game_dir)
+
+    # 支持多种格式
+    files = [f for f in os.listdir(game_dir) if f.endswith(('.mp4', '.webm', '.mkv'))]
 
     if not files:
-        # 如果没素材，返回黑屏兜底
-        return ColorClip(size=(FULL_W, FULL_H - TOP_H), color=(0, 0, 0)).with_duration(duration)  # 修复颜色
-
+        print("⚠️ 警告：没找到游戏素材，使用黑屏代替")
+        return ColorClip(size=(FULL_W, TOP_H), color=(0, 0, 0)).with_duration(duration)  # 修复颜色
     video_path = os.path.join(game_dir, random.choice(files))
     clip = VideoFileClip(video_path)
 
-    # 随机截取一段
+    # 随机截取
     if clip.duration > duration:
         start = random.uniform(0, clip.duration - duration - 1)
         clip = clip.subclipped(start, start + duration)
     else:
         clip = clip.with_effects([vfx.Loop(duration=duration)])
 
-    # 强制调整大小并裁剪填充下半屏
-    target_h = FULL_H - TOP_H
-    clip = clip.with_effects([
-        vfx.Resize(height=target_h),
-        vfx.Crop(width=FULL_W, height=target_h, x_center=clip.w / 2, y_center=clip.h / 2)
-    ])
+    # === 关键修复：强制填充逻辑 (Cover Mode) ===
+    # 目标尺寸: 1080 x 960
+    ratio_clip = clip.w / clip.h
+    ratio_target = FULL_W / TOP_H
 
-    return clip.without_audio()  # 游戏静音
+    if ratio_clip < ratio_target:
+        # 视频太瘦，按宽度对齐
+        clip = clip.with_effects([vfx.Resize(width=FULL_W)])
+    else:
+        # 视频太胖，按高度对齐
+        clip = clip.with_effects([vfx.Resize(height=TOP_H)])
+
+    # 居中裁剪到 1080x960
+    clip = clip.with_effects([vfx.Crop(width=FULL_W, height=TOP_H, x_center=clip.w / 2, y_center=clip.h / 2)])
+
+    return clip.without_audio()
 
 
 
@@ -96,28 +109,34 @@ def create_text_img_pil(text, size, color='white', stroke_color='black'):
 # 3. 生成 1/4 屏的小方块 (因为现在红蓝各占 1/4 了)
 def create_quarter_clip(img_path, text, color_rgb, is_top_quarter=True):
     """
-    生成高度为 TOP_H / 2 (即 480px) 的片段
+    生成 1/4 屏画面 (1080 x 480)
     """
-    h_quarter = TOP_H // 2
+    target_h = H_QUARTER
 
     if os.path.exists(img_path):
         img = ImageClip(img_path)
-        img = img.with_effects([
-            vfx.Resize(height=h_quarter),
-            vfx.Crop(width=FULL_W, height=h_quarter, x_center=img.w / 2, y_center=img.h / 2)
-        ])
+        # 强制填充逻辑
+        ratio_img = img.w / img.h
+        ratio_target = FULL_W / target_h
+
+        if ratio_img < ratio_target:
+            img = img.with_effects([vfx.Resize(width=FULL_W)])
+        else:
+            img = img.with_effects([vfx.Resize(height=target_h)])
+
+        img = img.with_effects([vfx.Crop(width=FULL_W, height=target_h, x_center=img.w/2, y_center=img.h/2)])
     else:
-        img = ColorClip(size=(FULL_W, h_quarter), color=(50, 50, 50))
+        img = ColorClip(size=(FULL_W, target_h), color=(50,50,50))
 
-    tint = ColorClip(size=(FULL_W, h_quarter), color=color_rgb).with_opacity(0.2)
+    tint = ColorClip(size=(FULL_W, target_h), color=color_rgb).with_opacity(0.2)
 
-    # 文字位置微调
+    # 文字
     txt_arr = create_text_img_pil(text, (FULL_W, 150))
-    # 上半区文字靠下，下半区文字靠上
-    y_pos = h_quarter - 180 if is_top_quarter else 30
+    # 如果是上面的块(Top)，文字放下边；如果是下面的块(Bottom)，文字放上边 (视觉聚焦)
+    y_pos = target_h - 160 if is_top_quarter else 20
     txt_clip = ImageClip(txt_arr).with_position(('center', y_pos))
 
-    return CompositeVideoClip([img, tint, txt_clip], size=(FULL_W, h_quarter))
+    return CompositeVideoClip([img, tint, txt_clip], size=(FULL_W, target_h))
 
 
 # 4. 特效：震动 (只震动上半部分)
@@ -181,7 +200,7 @@ async def create_full_video_segment(q_data, duration, is_last, temp_id):
     content_clip = await create_content_segment(q_data, duration, is_last, temp_id)
 
     # 2. 生成下半部分游戏
-    gameplay_clip = get_random_gameplay_clip(duration)
+    gameplay_clip = get_gameplay_clip(duration)
 
     # 3. 垂直拼接 (Top: Content, Bottom: Gameplay)
     full_visual = clips_array([[content_clip], [gameplay_clip]])

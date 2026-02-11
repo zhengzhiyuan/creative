@@ -9,49 +9,38 @@ if sys.platform == "darwin": # Mac
 
 def process_with_ffmpeg(main_path, sub_path, output_path):
     """
-    强制 1:1 输出，针对 Mac VideoToolbox 加速
+    强制 1:1，处理黑边，时间轴对齐，边缘羽化，且强制限时 59 秒
     """
-    # 逻辑重新计算：
-    # 1. 主视频(0:v) 缩放至 608x1080，然后 pad 成 1080x1080 的画布，位置在(0,0)
-    # 2. 副视频(1:v) 缩放至 608x1080，裁剪掉左边 68px，剩下 540px
-    # 3. 副视频左侧做 68px 羽化
-    # 4. 将副视频叠在画布的 x=472 (即 1080-608) 位置，确保重叠 68px
-
-    # 精准坐标计算：
-    # [main] 占 0-608 像素
-    # [sub] 裁剪后剩下 540 像素，放在 540 像素位置，刚好填满 540-1080 空间
-    # 重叠带出现在 540 到 608 像素之间，宽度正好是 68 像素
-
+    # 滤镜逻辑：
+    # 1. 主视频 [0:v] 缩放并 pad 成 1080x1080
+    # 2. 副视频 [1:v] 裁剪羽化
     filter_complex = (
-        "[0:v]scale=608:1080,setsar=1,setpts=PTS-STARTPTS,pad=1080:1080:0:0[main];"
-        "[1:v]scale=608:1080,setsar=1,setpts=PTS-STARTPTS,crop=540:1080:68:0,"
+        "[0:v]fps=30,scale=608:1080,setsar=1,setpts=PTS-STARTPTS,pad=1080:1080:0:0[main];"
+        "[1:v]fps=30,scale=608:1080,setsar=1,setpts=PTS-STARTPTS,crop=540:1080:68:0,"
         "geq=lum='p(X,Y)':a='if(lt(X,68),X/68*255,255)'[sub];"
         "[main][sub]overlay=540:0:shortest=1[outv]"
     )
 
     cmd = [
-        'ffmpeg',
-        '-y',
+        'ffmpeg', '-y',
+        '-t', '59',            # 【新增】强制限制输出时长为 59 秒
         '-i', main_path,
-        '-stream_loop', '-1',  # 放在 -i sub_path 之前，表示无限循环该输入
+        '-stream_loop', '-1',  # 副视频无限循环
         '-i', sub_path,
         '-filter_complex', filter_complex,
         '-map', '[outv]',
-        '-map', '0:a',
+        '-map', '0:a',        # 仅保留主视频音轨
         '-c:v', 'h264_videotoolbox',
         '-b:v', '6000k',
-        '-shortest',  # 关键：以主视频时长为基准切断
         output_path
     ]
 
     try:
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
-        if result.returncode != 0:
-            print(f"❌ 失败: {os.path.basename(main_path)}\n原因: {result.stderr.decode()}")
-        else:
-            print(f"✅ 成功: {os.path.basename(main_path)}")
-    except Exception as e:
-        print(f"❌ 系统错误: {e}")
+        # 捕获 stderr 以便调试
+        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        print(f"✅ 成功: {os.path.basename(main_path)}")
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 失败: {os.path.basename(main_path)}\n原因: {e.stderr.decode()}")
 
 
 def batch_process(main_dir, sub_dir, output_dir=None):

@@ -2,7 +2,10 @@ import os
 import random
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
-
+import sys
+# 确保终端能正确处理 utf-8
+if sys.platform == "darwin": # Mac
+    os.environ["PYTHONIOENCODING"] = "utf-8"
 
 def process_with_ffmpeg(main_path, sub_path, output_path):
     """
@@ -21,7 +24,7 @@ def process_with_ffmpeg(main_path, sub_path, output_path):
 
     filter_complex = (
         "[0:v]scale=608:1080,setsar=1,setpts=PTS-STARTPTS,pad=1080:1080:0:0[main];"
-        "[1:v]scale=608:1080,setsar=1,setpts=PTS-STARTPTS,loop=loop=-1:size=2:start=0,crop=540:1080:68:0,"
+        "[1:v]scale=608:1080,setsar=1,setpts=PTS-STARTPTS,crop=540:1080:68:0,"
         "geq=lum='p(X,Y)':a='if(lt(X,68),X/68*255,255)'[sub];"
         "[main][sub]overlay=540:0:shortest=1[outv]"
     )
@@ -29,15 +32,15 @@ def process_with_ffmpeg(main_path, sub_path, output_path):
     cmd = [
         'ffmpeg',
         '-y',
-        '-hwaccel', 'auto',
         '-i', main_path,
+        '-stream_loop', '-1',  # 放在 -i sub_path 之前，表示无限循环该输入
         '-i', sub_path,
         '-filter_complex', filter_complex,
         '-map', '[outv]',
-        '-map', '0:a',  # 仅保留主视频音频
+        '-map', '0:a',
         '-c:v', 'h264_videotoolbox',
         '-b:v', '6000k',
-        '-profile:v', 'main',  # 增加兼容性
+        '-shortest',  # 关键：以主视频时长为基准切断
         output_path
     ]
 

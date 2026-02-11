@@ -64,8 +64,8 @@ def download_tiktok_videos(collection_url, save_dir):
 
 if __name__ == "__main__":
     # 示例：某个博主的主页链接
-    target_url = "https://www.tiktok.com/@smoorfy_julia"
+    target_url = "https://www.tiktok.com/@katy.vine"
     # 你的主视频存放目录
-    main_video_path = "/Users/huangyun/Desktop/搬运/A1"
+    main_video_path = "/Users/huangyun/Desktop/搬运/A17"
 
     download_tiktok_videos(target_url, main_video_path)

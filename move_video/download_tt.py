@@ -26,7 +26,7 @@ def download_tiktok_videos(collection_url, save_dir):
         '--max-downloads', '3',  # 核心：每次运行只下载3个符合条件的视频
 
         # --- 过滤逻辑 ---
-        '--match-filter', "duration > 15 & like_count >= 150000",
+        '--match-filter', "duration > 15 & like_count >= 120000",
 
         # --- 文件名与标题 ---
         # 文件名包含：上传日期_视频ID_视频标题(前90字)

@@ -56,7 +56,7 @@ def run_pipeline(task: TaskType):
 
 
 if __name__ == "__main__":
-    run_pipeline(TaskType.A1)
+    run_pipeline(TaskType.A6)
     # 运行所有定义的赛道
     # for task in TaskType:
     #     run_pipeline(task)

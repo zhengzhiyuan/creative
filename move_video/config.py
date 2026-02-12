@@ -67,11 +67,6 @@ class TaskType(Enum):
         "https://www.tiktok.com/@light_house_prod",
         "/Users/huangyun/Desktop/搬运/A18"
     )
-    A2 = (
-        "A2",
-        "https://www.tiktok.com/@willstar.media",
-        "/Users/huangyun/Desktop/搬运/A2"
-    )
     A19 = (
         "A19",
         "https://www.tiktok.com/@natalikes",

@@ -89,3 +89,6 @@ class TaskType(Enum):
 
 # 副视频目录是全局统一的，保持不变
 GLOBAL_SUB_VIDEO_DIR = "/Users/huangyun/Desktop/搬运/副视频/data/关注/3710225754109904/视频"
+
+# 副视频目录是全局统一的，保持不变
+GLOBAL_BGM_DIR = "/Users/huangyun/Desktop/搬运/BGM"

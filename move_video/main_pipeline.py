@@ -4,7 +4,8 @@ import shutil
 # 导入配置和函数
 from move_video.download_tt import download_tiktok_videos
 from move_video.process_merge_video import batch_process
-from move_video.config import TaskType, GLOBAL_SUB_VIDEO_DIR
+# 注意：这里需要去 config.py 增加 GLOBAL_BGM_DIR 的定义
+from move_video.config import TaskType, GLOBAL_SUB_VIDEO_DIR, GLOBAL_BGM_DIR
 
 
 def clean_directory(directory):
@@ -39,24 +40,28 @@ def run_pipeline(task: TaskType):
 
     print(f"\n🚀 === 启动任务赛道: {task.name} ({env_name}) ===")
 
-    # 【新增环节】清理老旧视频，确保环境干净
+    # 1. 清理老旧视频，确保环境干净
     clean_directory(main_video_dir)
 
-    # 1. 下载阶段
+    # 2. 下载阶段
     print(f"Step 1: 开始下载 {env_name} 赛道视频...")
     download_tiktok_videos(target_url, main_video_dir)
 
-    # 2. 处理阶段
-    print(f"\nStep 2: 开始 FFmpeg 合成处理...")
-    # 确保 batch_process 内部逻辑会在 main_video_dir 下重新创建 target 文件夹
-    batch_process(main_video_dir, GLOBAL_SUB_VIDEO_DIR)
+    # 3. 处理阶段 (核心修改点)
+    print(f"\nStep 2: 开始 FFmpeg 终极去重合成处理...")
+
+    # 【修改点】现在传递 3 个目录：主视频、副视频、BGM目录
+    # 确保你的 batch_process 函数接收这三个参数
+    batch_process(main_video_dir, GLOBAL_SUB_VIDEO_DIR, GLOBAL_BGM_DIR)
 
     print(f"\n✅ 任务 {task.name} 执行完毕！")
     print("-" * 40)
 
 
 if __name__ == "__main__":
+    # 建议在运行前手动检查一遍 BGM 目录里是否有文件
+    if not os.path.exists(GLOBAL_BGM_DIR) or not os.listdir(GLOBAL_BGM_DIR):
+        print(f"⚠️ 警告: BGM 目录 {GLOBAL_BGM_DIR} 为空，请先运行 bgm_library.py 生成噪音文件！")
+        sys.exit(1)
+
     run_pipeline(TaskType.A8)
-    # 运行所有定义的赛道
-    # for task in TaskType:
-    #     run_pipeline(task)

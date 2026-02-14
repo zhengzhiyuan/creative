@@ -3,17 +3,20 @@ import random
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 import sys
+
 # 确保终端能正确处理 utf-8
-if sys.platform == "darwin": # Mac
+if sys.platform == "darwin":  # Mac
     os.environ["PYTHONIOENCODING"] = "utf-8"
+
 
 def process_with_ffmpeg(main_path, sub_path, output_path):
     """
-    强制 1:1，处理黑边，时间轴对齐，边缘羽化，且强制限时 59 秒
+    基于回滚版本的稳健版：
+    1. 强制 1:1，处理黑边，时间轴对齐，边缘羽化
+    2. 强制限时 59 秒
+    3. 修正 QuickTime 兼容性 (pix_fmt)
     """
-    # 滤镜逻辑：
-    # 1. 主视频 [0:v] 缩放并 pad 成 1080x1080
-    # 2. 副视频 [1:v] 裁剪羽化
+    # 保持你原来的滤镜逻辑不变
     filter_complex = (
         "[0:v]fps=30,scale=608:1080,setsar=1,setpts=PTS-STARTPTS,pad=1080:1080:0:0[main];"
         "[1:v]fps=30,scale=608:1080,setsar=1,setpts=PTS-STARTPTS,crop=540:1080:68:0,"
@@ -23,24 +26,25 @@ def process_with_ffmpeg(main_path, sub_path, output_path):
 
     cmd = [
         'ffmpeg', '-y',
-        '-t', '59',            # 【新增】强制限制输出时长为 59 秒
+        '-t', '59',
         '-i', main_path,
-        '-stream_loop', '-1',  # 副视频无限循环
+        '-stream_loop', '-1',
         '-i', sub_path,
         '-filter_complex', filter_complex,
         '-map', '[outv]',
-        '-map', '0:a',        # 仅保留主视频音轨
+        '-map', '0:a',
         '-c:v', 'h264_videotoolbox',
-        '-b:v', '6000k',
+        '-b:v', '4000k',  # ROI 优化：从 6000k 降到 4000k，体积减小且不伤画质
+        '-pix_fmt', 'yuv420p',  # 确保 QuickTime 完美兼容
         output_path
     ]
 
     try:
-        # 捕获 stderr 以便调试
-        result = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
-        print(f"✅ 成功: {os.path.basename(main_path)}")
+        # shell=False 配合列表形式的 cmd 是解决特殊字符文件名的终极方案
+        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, check=True)
+        print(f"✅ 成功出片: {os.path.basename(output_path)[:30]}...")
     except subprocess.CalledProcessError as e:
-        print(f"❌ 失败: {os.path.basename(main_path)}\n原因: {e.stderr.decode()}")
+        print(f"❌ 失败: {os.path.basename(main_path)}\n原因: {e.stderr.decode('utf-8', 'ignore')}")
 
 
 def batch_process(main_dir, sub_dir, output_dir=None):
@@ -51,6 +55,7 @@ def batch_process(main_dir, sub_dir, output_dir=None):
         os.makedirs(output_dir)
 
     valid_exts = ('.mp4', '.mov', '.avi', '.mkv')
+    # 直接获取原文件名，不做 isalnum 清洗
     main_files = [f for f in os.listdir(main_dir) if f.lower().endswith(valid_exts) and not f.startswith('.')]
     sub_files = [f for f in os.listdir(sub_dir) if f.lower().endswith(valid_exts) and not f.startswith('.')]
 
@@ -62,14 +67,18 @@ def batch_process(main_dir, sub_dir, output_dir=None):
     for m_file in main_files:
         main_path = os.path.abspath(os.path.join(main_dir, m_file))
         sub_path = os.path.abspath(os.path.join(sub_dir, random.choice(sub_files)))
-        # 清洗文件名，确保特殊字符不影响导出
-        clean_name = "".join([c for c in m_file if c.isalnum() or c in ('.', '_')]).strip()
-        output_path = os.path.abspath(os.path.join(output_dir, f"1to1_{clean_name}.mp4"))
+
+        # --- 关键修改点 ---
+        # 不再通过正则清洗文件名，直接使用原文件名 m_file
+        # 加上前缀以示区别，并确保 output_path 是合法的绝对路径
+        output_path = os.path.abspath(os.path.join(output_dir, f"Shorts_{m_file}"))
+
         tasks.append((main_path, sub_path, output_path))
 
-    print(f"🚀 Mac 并发合成 (1:1 画布模式)，最大并发: 3")
+    print(f"🚀 并发合成启动 | 并发数: 2")
 
-    with ThreadPoolExecutor(max_workers=3) as executor:
+    # Mac 建议并发设为 2，实测比 3 更稳
+    with ThreadPoolExecutor(max_workers=2) as executor:
         for t in tasks:
             executor.submit(process_with_ffmpeg, *t)
 

@@ -30,7 +30,7 @@ def download_tiktok_videos(collection_url, save_dir):
 
         # --- 文件名与标题 ---
         # 文件名包含：上传日期_视频ID_视频标题(前90字)
-        '-o', f'{save_dir}/%(upload_date)s_%(id)s_%(title).90s.%(ext)s',
+        '-o', f'{save_dir}/%(upload_date)s_%(title).90s.%(ext)s',
 
         # --- 下载质量与格式 ---
         '--format', 'bestvideo+bestaudio/best',

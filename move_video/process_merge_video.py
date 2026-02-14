@@ -90,9 +90,9 @@ def batch_process(main_dir, sub_dir, bgm_dir, output_dir=None):
         output_path = os.path.abspath(os.path.join(output_dir, f"Safe_{m_file}"))
         tasks.append((main_path, sub_path, bgm_path, output_path))
 
-    print(f"🚀 生产线启动 | 总任务数: {len(tasks)} | 并发数: 2")
+    print(f"🚀 生产线启动 | 总任务数: {len(tasks)} | 并发数: 3")
 
-    # Mac 建议并发设为 2，实测能最有效地利用 videotoolbox 硬件单元
+    # Mac 建议并发设为 3，实测能最有效地利用 videotoolbox 硬件单元
     with ThreadPoolExecutor(max_workers=3) as executor:
         for t in tasks:
             executor.submit(process_with_ffmpeg, *t)

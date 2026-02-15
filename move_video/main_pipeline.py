@@ -64,4 +64,4 @@ if __name__ == "__main__":
         print(f"⚠️ 警告: BGM 目录 {GLOBAL_BGM_DIR} 为空，请先运行 bgm_library.py 生成噪音文件！")
         sys.exit(1)
 
-    run_pipeline(TaskType.A10)
+    run_pipeline(TaskType.A20)

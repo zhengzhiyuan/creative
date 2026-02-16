@@ -19,31 +19,24 @@ def download_tiktok_videos(collection_url, save_dir):
 
     cmd = [
         sys.executable, '-m', 'yt_dlp',
-        # --- 进度管理 ---
-        '--download-archive', archive_file,  # 核心：自动跳过记录在案的视频ID
-
-        # --- 数量控制 ---
-        '--max-downloads', '3',  # 核心：每次运行只下载3个符合条件的视频
-
-        # --- 过滤逻辑 ---
+        '--download-archive', archive_file,
+        '--max-downloads', '3',
         '--match-filter', "duration > 15 & like_count >= 120000",
-
-        # --- 文件名与标题 ---
-        # 文件名包含：上传日期_视频ID_视频标题(前90字)
         '-o', f'{save_dir}/%(upload_date)s_%(title).90s.%(ext)s',
-
-        # --- 下载质量与格式 ---
         '--format', 'bestvideo+bestaudio/best',
         '--merge-output-format', 'mp4',
-
-        # --- 网络与环境 ---
         '--no-check-certificate',
         '--ignore-errors',
 
-        # --- 身份伪装（确保能抓到点赞数） ---
-        '--cookies-from-browser', 'chrome',  # 读取Chrome的Cookie
+        # --- 重点修改 1：增加此项解决 SSL/握手问题 ---
+        '--legacy-server-connect',
+
+        # --- 重点修改 2：Cookie 处理 ---
+        '--cookies-from-browser', 'chrome',
+
+        # --- 重点修改 3：使用更现代的 UA ---
         '--user-agent',
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36',
 
         collection_url
     ]

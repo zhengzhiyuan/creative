@@ -21,7 +21,7 @@ def download_tiktok_videos(collection_url, save_dir):
         sys.executable, '-m', 'yt_dlp',
         '--download-archive', archive_file,
         '--max-downloads', '3',
-        '--match-filter', "duration > 15 & like_count >= 120000",
+        '--match-filter', "duration > 15 & like_count >= 180000",
         '-o', f'{save_dir}/%(upload_date)s_%(title).90s.%(ext)s',
         '--format', 'bestvideo+bestaudio/best',
         '--merge-output-format', 'mp4',

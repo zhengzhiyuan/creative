@@ -100,7 +100,7 @@ def batch_process(main_dir, sub_dir, bgm_dir, output_dir=None):
 
 if __name__ == "__main__":
     # --- 请在这里配置你的文件夹路径 ---
-    MAIN_FOLDER = "/Users/huangyun/Desktop/搬运/A8"
+    MAIN_FOLDER = "/Users/huangyun/Desktop/搬运/A2"
     SUB_FOLDER = "/Users/huangyun/Desktop/搬运/副视频/data/关注/3710225754109904/视频"
     BGM_FOLDER = "/Users/huangyun/Desktop/搬运/BGM"
 

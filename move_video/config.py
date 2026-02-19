@@ -24,7 +24,7 @@ class TaskType(Enum):
     )
     A5 = (
         "A5",
-        "https://www.tiktok.com/@ahmdhajri",
+        "https://www.tiktok.com/@lia.steffi",
         "/Users/huangyun/Desktop/搬运/A5"
     )
     A6 = (
@@ -70,10 +70,22 @@ class TaskType(Enum):
         "/Users/huangyun/Desktop/搬运/A13"
     )
 
+    A14 = (
+        "A14",
+        "https://www.tiktok.com/@dilyadilyusha",
+        "/Users/huangyun/Desktop/搬运/A14"
+    )
+
     A15 = (
         "A15",
-        "https://www.tiktok.com/@rautovv",
+        "https://www.tiktok.com/@astafyevadaria",
         "/Users/huangyun/Desktop/搬运/A15"
+    )
+
+    A16 = (
+        "A16",
+        "https://www.tiktok.com/@vikchachi",
+        "/Users/huangyun/Desktop/搬运/A16"
     )
 
     A17 = (
@@ -83,7 +95,7 @@ class TaskType(Enum):
     )
     A18 = (
         "A18",
-        "https://www.tiktok.com/@theangelshome",
+        "https://www.tiktok.com/@beautybomb.rus",
         "/Users/huangyun/Desktop/搬运/A18"
     )
     A19 = (

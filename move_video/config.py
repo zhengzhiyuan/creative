@@ -29,7 +29,7 @@ class TaskType(Enum):
     )
     A6 = (
         "A6",
-        "https://www.tiktok.com/@j.chatae?lang=zh-Hans",
+        "https://www.tiktok.com/@vivafilmsofficial",
         "/Users/huangyun/Desktop/搬运/A6"
     )
     A7 = (
@@ -84,7 +84,7 @@ class TaskType(Enum):
 
     A16 = (
         "A16",
-        "https://www.tiktok.com/@vikchachi",
+        "https://www.tiktok.com/@proslushkashow",
         "/Users/huangyun/Desktop/搬运/A16"
     )
 

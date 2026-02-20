@@ -36,7 +36,7 @@ def clean_directory(directory):
 
 def run_pipeline(task: TaskType):
     # 解构 Enum 里的值
-    env_name, target_url, main_video_dir = task.value
+    env_name, target_url, main_video_dir, sub_video_dir = task.value
 
     print(f"\n🚀 === 启动任务赛道: {task.name} ({env_name}) ===")
 
@@ -52,7 +52,7 @@ def run_pipeline(task: TaskType):
 
     # 【修改点】现在传递 3 个目录：主视频、副视频、BGM目录
     # 确保你的 batch_process 函数接收这三个参数
-    batch_process(main_video_dir, GLOBAL_SUB_VIDEO_DIR, GLOBAL_BGM_DIR)
+    batch_process(main_video_dir, sub_video_dir, GLOBAL_BGM_DIR)
 
     print(f"\n✅ 任务 {task.name} 执行完毕！")
     print("-" * 40)
@@ -64,4 +64,4 @@ if __name__ == "__main__":
         print(f"⚠️ 警告: BGM 目录 {GLOBAL_BGM_DIR} 为空，请先运行 bgm_library.py 生成噪音文件！")
         sys.exit(1)
 
-    run_pipeline(TaskType.A14)
+    run_pipeline(TaskType.A4)

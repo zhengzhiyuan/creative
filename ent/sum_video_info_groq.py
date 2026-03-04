@@ -130,7 +130,7 @@ def process_single_video(task_info):
                 "视频文件名": filename,
                 "总结": summary,
                 "地区": region,
-                "语音文字": content[:200] + "...",
+                "语音文字": content,
                 "处理时间": time.strftime("%Y-%m-%d %H:%M:%S")
             }
         }

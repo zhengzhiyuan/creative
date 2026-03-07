@@ -18,7 +18,7 @@ class TaskType(Enum):
     )
     A2 = (
         "A2",
-        "https://www.tiktok.com/@moni_lina",
+        "https://www.tiktok.com/@kristaomur",
         "/Users/huangyun/Desktop/搬运/A2",
         GLOBAL_SUB_VIDEO_DIR
     )
@@ -36,7 +36,7 @@ class TaskType(Enum):
     )
     A5 = (
         "A5",
-        "https://www.tiktok.com/@lia.steffi",
+        "https://www.tiktok.com/@danilklepikov",
         "/Users/huangyun/Desktop/搬运/A5",
         GLOBAL_SUB_VIDEO_DIR
     )
@@ -72,7 +72,7 @@ class TaskType(Enum):
     )
     A11 = (
         "A11",
-        "https://www.tiktok.com/@rad.miru",
+        "https://www.tiktok.com/@kingartouiros",
         "/Users/huangyun/Desktop/搬运/A11",
         GLOBAL_SUB_VIDEO_DIR
     )
@@ -107,7 +107,7 @@ class TaskType(Enum):
 
     A16 = (
         "A16",
-        "https://www.tiktok.com/@proslushkashow",
+        "https://www.tiktok.com/@miliya_island",
         "/Users/huangyun/Desktop/搬运/A16",
         GLOBAL_SUB_VIDEO_DIR
     )

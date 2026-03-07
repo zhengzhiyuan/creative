@@ -33,35 +33,30 @@ def process_single_video(task_info):
     keep_duration = max(0.1, info['duration'] - 2)
     is_portrait = info['width'] < info['height']
 
-    # --- 随机参数逻辑 (避开不稳定的 noise seed) ---
+    # --- 随机参数逻辑 ---
     crop_offset = random.uniform(0.095, 0.105)
-    # 随机亮度微调 (-0.01 到 0.01)
     r_bright = random.uniform(-0.01, 0.01)
-    # 随机对比度微调 (0.99 到 1.01)
     r_cont = random.uniform(0.99, 1.01)
 
-    # 动态裁剪滤镜
+    # 动态裁剪滤镜（保留你原有的微调逻辑）
     crop_filter = "" if is_portrait else f"crop=iw:ih*0.9:0:ih*{crop_offset},"
 
-    # 重新设计的滤镜链：裁剪 -> 基础噪点(不带seed) -> 色彩扰动 -> 480P合成
-    # 这里我们只使用 noise=alls=1，不加 seed 参数，避免 8.0 报错
+    # --- 核心修改：直接拉伸填满 ---
+    # 逻辑：裁剪 -> 基础噪点 -> 色彩微调 -> 强制拉伸到 854:480 -> 强制设置采样率(SAR)为 1:1
     filter_str = (
         f"trim=0:{keep_duration},setpts=PTS-STARTPTS,"
         f"{crop_filter}"
         f"noise=alls=1:allf=t+u,"
         f"eq=brightness={r_bright}:contrast={r_cont},"
-        f"split[main][bg];"
-        f"[bg]scale=854:480:force_original_aspect_ratio=increase,crop=854:480,"
-        f"boxblur=5:1,eq=brightness=-0.1[blurred_bg];"
-        f"[main]scale=854:480:force_original_aspect_ratio=decrease[scaled_v];"
-        f"[blurred_bg][scaled_v]overlay=(W-w)/2:(H-h)/2,setsar=1"
+        f"scale=854:480,"  # 重点：直接指定宽高，不保持比例，实现拉伸
+        f"setsar=1"        # 确保像素比例正常，防止在某些播放器中显示异常
     )
 
     cmd = [
         'ffmpeg', '-y', '-i', file_path,
         '-vf', filter_str,
         '-af', f"atrim=0:{keep_duration},asetpts=PTS-STARTPTS,volume={random.uniform(0.99, 1.01)}",
-        '-c:v', 'h264_videotoolbox',
+        '-c:v', 'h264_videotoolbox', # 保持你的 Mac 硬件加速
         '-b:v', '1200k',
         '-c:a', 'aac', '-b:a', '96k',
         '-map_metadata', '-1',
@@ -70,7 +65,7 @@ def process_single_video(task_info):
 
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        print(f"❌ 文件 {os.path.basename(file_path)} 处理失败。报错详情：\n{res.stderr}")
+        print(f"❌ 文件 {os.path.basename(file_path)} 处理失败。")
         return None
     return output_ts
 

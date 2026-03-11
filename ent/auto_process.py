@@ -33,7 +33,7 @@ async def main():
 
     # 生成最终文件名：关键词_时间.mp4
     timestamp = datetime.now().strftime("%H%M%S")
-    output_filename = f"merged_{raw_kw}_{timestamp}.mp4"
+    output_filename = f"final_{raw_kw}_{timestamp}.mp4"
     output_path = os.path.join(parent_dir, output_filename)
 
     # 4. 执行合并逻辑

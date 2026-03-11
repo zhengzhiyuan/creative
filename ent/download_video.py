@@ -6,11 +6,10 @@ import re
 import csv
 import os
 from datetime import datetime
+import random # 在文件顶部导入
 
 # ================= 配置区 =================
 # 1. 这里设置你的输出根目录（支持绝对地址或相对地址）
-# 示例 绝对地址: "/Users/你的用户名/Desktop/BiliDownload"
-# 示例 相对地址: "my_creative_material"
 OUTPUT_ROOT = "my_creative_material"
 
 # 2. 是否为每次搜索创建独立的子文件夹？ (True: 开启隔离 | False: 全部塞进根目录)
@@ -107,10 +106,10 @@ async def get_bili_video_tasks(keyword, min_single_min=1, max_single_min=15, tar
     return tasks
 
 
-def download_with_ytdlp(urls, keyword):
+async def download_with_ytdlp(urls, keyword):
     if not urls:
         print("⚠️ 未发现符合要求的素材。")
-        return
+        return None
 
     # 1. 路径处理
     abs_root = os.path.abspath(OUTPUT_ROOT)
@@ -124,9 +123,10 @@ def download_with_ytdlp(urls, keyword):
     if not os.path.exists(final_dir):
         os.makedirs(final_dir)
 
-    # 2. yt-dlp 配置
+    # 2. yt-dlp 配置 (修改点：强制 480p)
     ydl_opts_base = {
-        'format': 'bestvideo[vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[vcodec^=avc1]',
+        # 限制视频高度不超过 480 像素，并优先选择常见的 AVC1 编码以保证兼容性
+        'format': 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=480]',
         'merge_output_format': 'mp4',
         'nocheckcertificate': True,
         'cookiesfrombrowser': ('chrome',),
@@ -136,16 +136,24 @@ def download_with_ytdlp(urls, keyword):
         'no_warnings': True,
         'writeinfojson': True,
         'writedescription': True,
+        'retries': 10,
+        'fragment_retries': 10,
+        'retry_sleep_functions': {'http': lambda n: 5},
+        'file_access_retries': 5,
+        'noplaylist': True,  # 强制不下载播放列表/合集
+        'playlist_items': '1',  # 只下载第一部分（通常对应搜索结果的时长）
     }
 
     print(f"🚀 素材将存放至: {final_dir}")
 
     try:
         for index, url in enumerate(urls):
+            wait_time = random.uniform(3, 7)  # 随机等待 3 到 7 秒
+            print(f"☕️ 正在冷却 {wait_time:.1f} 秒，防止触发 B 站限速...")
+            await asyncio.sleep(wait_time)
             target_file_name = f"{index}.mp4"
 
             current_opts = ydl_opts_base.copy()
-            # 设置绝对输出路径模板
             current_opts['outtmpl'] = os.path.join(final_dir, f"{index}.%(ext)s")
 
             with yt_dlp.YoutubeDL(current_opts) as ydl:
@@ -168,14 +176,19 @@ def download_with_ytdlp(urls, keyword):
                 print(f"✅ 下载成功: {target_file_name} | 最热: {is_top_hot}")
 
         print(f"\n✨ 全部完成！路径: {final_dir}")
+        return final_dir
 
     except Exception as e:
         print(f"❌ 下载过程出错: {e}")
+        return None
 
 
 if __name__ == "__main__":
     raw_kw = input("请输入搜索关键字: ").strip()
     if not raw_kw: sys.exit()
 
-    video_tasks = asyncio.run(get_bili_video_tasks(raw_kw))
-    download_with_ytdlp(video_tasks, raw_kw)
+    async def run():
+        video_tasks = await get_bili_video_tasks(raw_kw)
+        await download_with_ytdlp(video_tasks, raw_kw)
+
+    asyncio.run(run())

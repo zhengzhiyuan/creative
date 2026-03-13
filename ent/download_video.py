@@ -15,7 +15,8 @@ OUTPUT_ROOT = "my_creative_material"
 # 2. 是否为每次搜索创建独立的子文件夹？ (True: 开启隔离 | False: 全部塞进根目录)
 USE_SUBFOLDER = True
 
-
+# 3. 网络代理设置
+# PROXY_URL = "http://127.0.0.1:7897" # 修改为你实际使用的代理地址
 # ==========================================
 
 def save_to_csv(data, folder_path):
@@ -41,7 +42,11 @@ async def get_bili_video_tasks(keyword, min_single_min=1, max_single_min=15, tar
     max_single_sec = max_single_min * 60
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False)
+        # 修改点：浏览器启动加入代理
+        browser = await p.chromium.launch(
+            headless=False,
+            # proxy={"server": PROXY_URL}
+        )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
         )
@@ -123,9 +128,8 @@ async def download_with_ytdlp(urls, keyword):
     if not os.path.exists(final_dir):
         os.makedirs(final_dir)
 
-    # 2. yt-dlp 配置 (修改点：强制 480p)
+    # 2. yt-dlp 配置
     ydl_opts_base = {
-        # 限制视频高度不超过 480 像素，并优先选择常见的 AVC1 编码以保证兼容性
         'format': 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=480]',
         'merge_output_format': 'mp4',
         'nocheckcertificate': True,
@@ -140,8 +144,10 @@ async def download_with_ytdlp(urls, keyword):
         'fragment_retries': 10,
         'retry_sleep_functions': {'http': lambda n: 5},
         'file_access_retries': 5,
-        'noplaylist': True,  # 强制不下载播放列表/合集
-        'playlist_items': '1',  # 只下载第一部分（通常对应搜索结果的时长）
+        'noplaylist': True,
+        'playlist_items': '1',
+        # 修改点：下载加入代理
+        # 'proxy': PROXY_URL,
     }
 
     print(f"🚀 素材将存放至: {final_dir}")

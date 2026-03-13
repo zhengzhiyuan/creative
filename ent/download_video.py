@@ -129,26 +129,31 @@ async def download_with_ytdlp(urls, keyword):
         os.makedirs(final_dir)
 
     # 2. yt-dlp 配置
-    ydl_opts_base = {
-        'format': 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best[height<=480]',
-        'merge_output_format': 'mp4',
-        'nocheckcertificate': True,
-        'cookiesfrombrowser': ('chrome',),
-        'restrictfilenames': True,
-        'postprocessor_args': ['-movflags', 'faststart'],
-        'quiet': True,
-        'no_warnings': True,
-        'writeinfojson': True,
-        'writedescription': True,
-        'retries': 10,
-        'fragment_retries': 10,
-        'retry_sleep_functions': {'http': lambda n: 5},
-        'file_access_retries': 5,
-        'noplaylist': True,
-        'playlist_items': '1',
-        # 修改点：下载加入代理
-        # 'proxy': PROXY_URL,
-    }
+        # 2. yt-dlp 配置 (优化后的格式选择逻辑)
+        ydl_opts_base = {
+            # 优先下载 480p 的 AVC 编码，如果没有，则下载 480p 的任意编码，最后保底下载 480p 单一格式
+            'format': (
+                'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/'
+                'bestvideo[height<=480]+bestaudio/'
+                'best[height<=480]'
+            ),
+            'merge_output_format': 'mp4',
+            'nocheckcertificate': True,
+            'cookiesfrombrowser': ('chrome',),
+            'restrictfilenames': True,
+            'postprocessor_args': ['-movflags', 'faststart'],
+            'quiet': True,
+            'no_warnings': True,
+            'writeinfojson': True,
+            'writedescription': True,
+            'retries': 10,
+            'fragment_retries': 10,
+            'retry_sleep_functions': {'http': lambda n: 5},
+            'file_access_retries': 5,
+            'noplaylist': True,
+            'playlist_items': '1',
+            # 'proxy': PROXY_URL,  # 确保这里的代理变量依然保留
+        }
 
     print(f"🚀 素材将存放至: {final_dir}")
 

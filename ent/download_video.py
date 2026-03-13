@@ -16,7 +16,7 @@ OUTPUT_ROOT = "my_creative_material"
 USE_SUBFOLDER = True
 
 # 3. 网络代理设置
-# PROXY_URL = "http://127.0.0.1:7897" # 修改为你实际使用的代理地址
+PROXY_URL = "http://127.0.0.1:7897" # 修改为你实际使用的代理地址
 # ==========================================
 
 def save_to_csv(data, folder_path):
@@ -45,7 +45,7 @@ async def get_bili_video_tasks(keyword, min_single_min=1, max_single_min=15, tar
         # 修改点：浏览器启动加入代理
         browser = await p.chromium.launch(
             headless=False,
-            # proxy={"server": PROXY_URL}
+            proxy={"server": PROXY_URL}
         )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
@@ -128,31 +128,30 @@ async def download_with_ytdlp(urls, keyword):
     if not os.path.exists(final_dir):
         os.makedirs(final_dir)
 
-    # 2. yt-dlp 配置
-        # 2. yt-dlp 配置 (优化后的格式选择逻辑)
+        # 2. yt-dlp 配置 (彻底解决 Requested format is not available)
+        # 2. yt-dlp 配置 (SSL 增强稳定版)
         ydl_opts_base = {
-            # 优先下载 480p 的 AVC 编码，如果没有，则下载 480p 的任意编码，最后保底下载 480p 单一格式
-            'format': (
-                'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/'
-                'bestvideo[height<=480]+bestaudio/'
-                'best[height<=480]'
-            ),
+            'format': 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=480]+bestaudio/best',
             'merge_output_format': 'mp4',
+
+            # --- 重点修改：彻底绕过 SSL 验证问题 ---
             'nocheckcertificate': True,
+            'legacy_server_connect': True,  # 允许旧版 SSL 连接，减少握手失败
+            'socket_timeout': 60,  # 将超时延长到 60 秒
+            'retries': 30,  # 极高次数重试
+            'fragment_retries': 30,
+            # -----------------------------------
+
             'cookiesfrombrowser': ('chrome',),
             'restrictfilenames': True,
             'postprocessor_args': ['-movflags', 'faststart'],
             'quiet': True,
             'no_warnings': True,
-            'writeinfojson': True,
-            'writedescription': True,
-            'retries': 10,
-            'fragment_retries': 10,
-            'retry_sleep_functions': {'http': lambda n: 5},
+            'retry_sleep_functions': {'http': lambda n: 10},  # 失败后休息更久一点再试
             'file_access_retries': 5,
             'noplaylist': True,
             'playlist_items': '1',
-            # 'proxy': PROXY_URL,  # 确保这里的代理变量依然保留
+            'proxy': PROXY_URL,
         }
 
     print(f"🚀 素材将存放至: {final_dir}")

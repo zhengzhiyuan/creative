@@ -107,7 +107,7 @@ def batch_process(main_dir, sub_dir, bgm_dir, output_dir=None):
         # 矩阵号建议：随机选择副视频和BGM
         sub_path = os.path.abspath(os.path.join(sub_dir, random.choice(sub_files)))
         bgm_path = os.path.abspath(os.path.join(bgm_dir, random.choice(bgm_files)))
-        output_path = os.path.abspath(os.path.join(output_dir, f"Final_{m_file}"))
+        output_path = os.path.abspath(os.path.join(output_dir, f"{m_file}"))
         tasks.append((main_path, sub_path, bgm_path, output_path))
 
     print(f"🚀 深度去重生产线启动 | 总任务: {len(tasks)}")

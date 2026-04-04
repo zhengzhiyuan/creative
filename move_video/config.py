@@ -93,7 +93,7 @@ class TaskType(Enum):
 
     A14 = (
         "A14",
-        "https://www.tiktok.com/@helgaaaaaaa_",
+        "https://www.tiktok.com/@elxan.niyazov04",
         "/Users/huangyun/Desktop/搬运/A14",
         GLOBAL_SUB_VIDEO_DIR
     )

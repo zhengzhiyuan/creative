@@ -6,34 +6,14 @@ import numpy as np
 import PIL.Image
 import subprocess
 from pydub import AudioSegment
-from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip, TextClip
-from moviepy.video.tools.subtitles import SubtitlesClip
-from moviepy.config import change_settings
-
-# --- 自动寻找 ImageMagick 路径 ---
-def find_imagemagick():
-    for cmd in ["magick", "convert"]:
-        try:
-            path = subprocess.check_output(["which", cmd]).decode("utf-8").strip()
-            if path:
-                return path
-        except:
-            continue
-    return None
-
-IM_PATH = find_imagemagick()
-if IM_PATH:
-    print(f"找到 ImageMagick 路径: {IM_PATH}")
-    change_settings({"IMAGEMAGICK_BINARY": IM_PATH})
-else:
-    print("错误：未能在系统中找到 ImageMagick，请执行 'brew install imagemagick'")
+from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, CompositeVideoClip
 
 # --- Pillow 兼容性补丁 ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- 核心配置 ---
-INPUT_TXT = "/Users/huangyun/git/creative/output/task_老公車禍癱瘓.公公怕我離婚.幫忙乾活…./1.txt"
+INPUT_TXT = "/Users/huangyun/git/creative/output/task_老公車禍癱瘓.公公怕我離婚.幫忙乾活…./2.txt"
 SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波"
 
 BASE_DIR = os.path.dirname(INPUT_TXT)
@@ -44,48 +24,61 @@ FINAL_VIDEO = os.path.join(BASE_DIR, "final_video_output.mp4")
 
 VOICE = "zh-CN-XiaoyiNeural"
 TARGET_RES = (1920, 1080)
-CLIP_DUR = 4
+CLIP_DUR = 4  # 每个片段的时长
+MAX_CONCURRENT_REQUESTS = 3  # TTS 并发数
 
 
-# --- 1. TTS 逻辑 ---
+# --- 1. TTS 并发逻辑 ---
+async def fetch_tts_chunk(semaphore, index, text, voice, temp_dir):
+    """单个 TTS 段的异步请求任务"""
+    async with semaphore:
+        chunk_mp3 = os.path.join(temp_dir, f"{index}.mp3")
+        r_rate = f"{random.randint(-20, -15)}%"
+        print(f"   [请求中] 第 {index + 1} 段...")
+
+        try:
+            communicate = edge_tts.Communicate(text, voice, rate=r_rate)
+            await communicate.save(chunk_mp3)
+            return index, chunk_mp3, text
+        except Exception as e:
+            print(f"   ❌ 第 {index + 1} 段合成失败: {e}")
+            return index, None, text
+
+
 async def tts_with_subtitles(text_list):
     if not os.path.exists(TEMP_DIR): os.makedirs(TEMP_DIR)
+    semaphore = asyncio.Semaphore(MAX_CONCURRENT_REQUESTS)
+
+    print(f"开始并发 TTS 合成，共 {len(text_list)} 段...")
+    tasks = [fetch_tts_chunk(semaphore, i, text, VOICE, TEMP_DIR) for i, text in enumerate(text_list)]
+    results = await asyncio.gather(*tasks)
+    results.sort(key=lambda x: x[0])
 
     combined_audio = AudioSegment.empty()
     subtitles_content = []
     current_time_ms = 0
 
-    print(f"开始 TTS 合成，共 {len(text_list)} 段...")
+    print("音频下载完毕，开始物理拼接...")
+    for index, mp3_path, text in results:
+        if mp3_path and os.path.exists(mp3_path):
+            try:
+                segment = AudioSegment.from_mp3(mp3_path)
+                start_time = current_time_ms / 1000.0
+                end_time = (current_time_ms + len(segment)) / 1000.0
 
-    for i, text in enumerate(text_list):
-        chunk_mp3 = os.path.join(TEMP_DIR, f"{i}.mp3")
-        r_rate = f"{random.randint(-20, -15)}%"
+                # 生成 SRT
+                srt_entry = f"{index + 1}\n{format_time(start_time)} --> {format_time(end_time)}\n{text}\n\n"
+                subtitles_content.append(srt_entry)
 
-        communicate = edge_tts.Communicate(text, VOICE, rate=r_rate)
-        submaker = edge_tts.SubMaker()
+                # 随机停顿增加暧昧感
+                pause_dur = random.randint(1500, 2800)
+                pause = AudioSegment.silent(duration=pause_dur)
 
-        with open(chunk_mp3, "wb") as f:
-            async for chunk in communicate.stream():
-                if chunk["type"] == "audio":
-                    f.write(chunk["data"])
-                elif chunk["type"] == "WordBoundary":
-                    submaker.feed(chunk)
-
-        segment = AudioSegment.from_mp3(chunk_mp3)
-
-        start_time = current_time_ms / 1000.0
-        end_time = (current_time_ms + len(segment)) / 1000.0
-
-        # 标准 SRT 格式
-        srt_entry = f"{i + 1}\n{format_time(start_time)} --> {format_time(end_time)}\n{text}\n\n"
-        subtitles_content.append(srt_entry)
-
-        pause_dur = random.randint(1500, 2800)
-        pause = AudioSegment.silent(duration=pause_dur)
-
-        combined_audio += segment + pause
-        current_time_ms += (len(segment) + pause_dur)
-        os.remove(chunk_mp3)
+                combined_audio += segment + pause
+                current_time_ms += (len(segment) + pause_dur)
+                os.remove(mp3_path)
+            except Exception as e:
+                print(f"音频段 {index} 拼接失败: {e}")
 
     with open(FINAL_SRT, "w", encoding="utf-8") as f:
         f.writelines(subtitles_content)
@@ -109,53 +102,72 @@ def generate_noise(duration_ms):
     return AudioSegment((samples * 32767).astype(np.int16).tobytes(), frame_rate=44100, sample_width=2, channels=1)
 
 
-# --- 2. 视频逻辑 ---
+# --- 2. 视频逻辑 (修复 AttributeError: 'NoneType' 报错) ---
 def create_video(total_duration):
-    print("开始生成视觉画面...")
+    print(f"开始生成视觉画面，目标时长: {total_duration:.2f}s...")
     all_vids = [os.path.join(SOURCE_VIDEOS_DIR, f) for f in os.listdir(SOURCE_VIDEOS_DIR) if
                 f.endswith(('.mp4', '.mov'))]
 
     if not all_vids:
-        print(f"错误：素材目录 {SOURCE_VIDEOS_DIR} 为空。")
+        print(f"错误：素材目录为空。")
         return
 
     clips = []
     curr = 0
-    while curr < total_duration:
-        v_path = random.choice(all_vids)
-        try:
-            with VideoFileClip(v_path) as v:
-                dur = min(CLIP_DUR, v.duration)
-                start = random.uniform(0, max(0, v.duration - dur))
-                clip = v.subclip(start, start + dur).without_audio()
+    opened_vfc = []  # 记录打开的文件对象
 
-                clip = clip.resize(height=TARGET_RES[1])
-                if clip.w != TARGET_RES[0]:
-                    clip = clip.set_position("center").on_color(size=TARGET_RES, color=(0, 0, 0))
+    try:
+        while curr < total_duration:
+            v_path = random.choice(all_vids)
+            # 关键：不要在这里使用 with 语句，否则 write_videofile 时读取器会被关闭
+            v = VideoFileClip(v_path)
+            opened_vfc.append(v)
 
-                clips.append(clip)
-                curr += dur
-        except Exception as e:
-            print(f"跳过视频 {v_path}: {e}")
+            dur = min(CLIP_DUR, v.duration)
+            start = random.uniform(0, max(0, v.duration - dur))
 
-    final_visual = concatenate_videoclips(clips, method="compose").set_duration(total_duration)
+            # 截取并处理画面
+            clip = v.subclip(start, start + dur).without_audio()
+            clip = clip.resize(height=TARGET_RES[1])
+            if clip.w != TARGET_RES[0]:
+                clip = clip.set_position("center").on_color(size=TARGET_RES, color=(0, 0, 0))
 
-    # 字幕生成
-    generator = lambda txt: TextClip(txt, font='/System/Library/Fonts/PingFang.ttc',
-                                     fontsize=45, color='white', stroke_color='black', stroke_width=1,
-                                     method='caption', size=(TARGET_RES[0] * 0.8, None))
+            clips.append(clip)
+            curr += dur
 
-    subtitles = SubtitlesClip(FINAL_SRT, generator)
+        print(f"片段提取完成 (共 {len(clips)} 段)，开始合并渲染...")
+        final_visual = concatenate_videoclips(clips, method="compose").set_duration(total_duration)
 
-    result = CompositeVideoClip([final_visual, subtitles.set_position(('center', 850))])
-    result = result.set_audio(AudioFileClip(FINAL_MP3))
+        # 绑定音频
+        audio_bg = AudioFileClip(FINAL_MP3)
+        result = final_visual.set_audio(audio_bg)
 
-    print("正在渲染最终视频...")
-    result.write_videofile(FINAL_VIDEO, codec="libx264", audio_codec="aac", fps=24, threads=4)
+        # 写入文件
+        result.write_videofile(
+            FINAL_VIDEO,
+            codec="h264_videotoolbox",  # 使用苹果硬件加速
+            bitrate="5000k",  # 指定码率保证清晰度
+            audio_codec="aac",
+            fps=24
+        )
+        audio_bg.close()
+
+    finally:
+        # 无论成功失败，统一关闭所有打开的文件句柄，释放内存
+        print("清理视频句柄...")
+        for c in opened_vfc:
+            try:
+                c.close()
+            except:
+                pass
 
 
 # --- 3. 运行入口 ---
 async def main():
+    if not os.path.exists(INPUT_TXT):
+        print(f"错误：找不到文稿 {INPUT_TXT}")
+        return
+
     with open(INPUT_TXT, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if len(line.strip()) > 5]
 
@@ -163,15 +175,33 @@ async def main():
         print("错误：文稿为空。")
         return
 
+    # 1. 执行 TTS
     total_sec = await tts_with_subtitles(lines)
+
+    # 2. 执行视频合成
     create_video(total_sec)
 
+    # 3. 清理临时目录
     if os.path.exists(TEMP_DIR):
         for file in os.listdir(TEMP_DIR):
-            os.remove(os.path.join(TEMP_DIR, file))
-        os.rmdir(TEMP_DIR)
-    print(f"任务完成！保存于: {FINAL_VIDEO}")
+            try:
+                os.remove(os.path.join(TEMP_DIR, file))
+            except:
+                pass
+        try:
+            os.rmdir(TEMP_DIR)
+        except:
+            pass
+
+    print("-" * 30)
+    print(f"任务圆满完成！")
+    print(f"视频路径: {FINAL_VIDEO}")
+    print(f"字幕路径: {FINAL_SRT}")
+    print("-" * 30)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n用户中断任务。")

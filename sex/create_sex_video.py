@@ -173,7 +173,7 @@ async def main():
         return
 
     # --- 智能合并逻辑 ---
-    MIN_CHAR_COUNT = 300
+    MIN_CHAR_COUNT = 200
     processed_chunks = []
     temp_buffer = []
     current_count = 0

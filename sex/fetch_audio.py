@@ -96,14 +96,14 @@ def process_single_task(main_video, low_views_pool, task_index):
     # 3. 写入历史记录
     update_history(video_id)
 
-    # 4. 补齐逻辑：循环下载直到满足 1h (3600秒)
+    # 4. 补齐逻辑：循环下载直到满足 50min (3000秒)
     current_total_duration = main_duration
     filler_count = 2  # 补齐视频的文件名从 "2" 开始
 
     filler_futures = []
     filler_txt_paths = []
 
-    while current_total_duration < 3600:
+    while current_total_duration < 3000:
         if not low_views_pool:
             print(f"  [任务 {task_index}] 提示：低播放量池已空，无法继续补齐。")
             break

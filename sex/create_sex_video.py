@@ -145,7 +145,8 @@ def create_video(total_duration):
             bitrate="5000k",
             audio_codec="aac",
             fps=24,
-            threads=4
+            threads=4,
+            logger="bar"  # <--- 显式启用进度条日志
         )
         audio_bg.close()
 

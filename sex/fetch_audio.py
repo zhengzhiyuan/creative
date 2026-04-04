@@ -5,7 +5,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 
 # --- 配置区 ---
-BASE_OUTPUT_DIR = "/Users/huangyun/git/creative/output"
+BASE_OUTPUT_DIR = "/Users/huangyun/git/creative/output1"
 # 历史文件现在动态指向 BASE_OUTPUT_DIR 下
 ARCHIVE_FILE = os.path.join(BASE_OUTPUT_DIR, "downloaded_history.txt")
 
@@ -15,6 +15,9 @@ CHANNEL_URL = "https://www.youtube.com/@%E8%8C%9C%E8%8C%9C-b1p/videos"
 # 全局锁：transcribe_lock 负责保护 CPU 转录，file_lock 负责保护历史文件写入
 transcribe_lock = threading.Lock()
 file_lock = threading.Lock()
+
+# 专用转录线程池：max_workers=1 配合 transcribe_lock 确保 Intel CPU 顺序处理转录且不崩溃
+transcribe_executor = ThreadPoolExecutor(max_workers=1)
 
 print("正在加载 Whisper 模型...")
 # 如果 Intel Mac 依然吃力，可以考虑将 "base" 改为 "tiny"
@@ -60,6 +63,21 @@ def update_history(video_id):
             f.write(f"{video_id}\n")
 
 
+def wait_and_merge_fillers(target_dir, filler_futures, filler_txt_paths):
+    """等待所有补齐视频转录完成并合并 txt"""
+    # 等待该任务关联的所有补齐转录 future 完成
+    for future in filler_futures:
+        future.result()
+
+    combined_path = os.path.join(target_dir, "combined_fillers.txt")
+    with open(combined_path, "w", encoding="utf-8") as outfile:
+        for txt_path in filler_txt_paths:
+            if os.path.exists(txt_path):
+                with open(txt_path, "r", encoding="utf-8") as infile:
+                    outfile.write(infile.read() + "\n\n")
+    print(f"--- [合并完成] 已生成: {combined_path}")
+
+
 def process_single_task(main_video, low_views_pool, task_index):
     video_id = main_video['id']
     # 文件夹命名去掉非法字符并限制长度
@@ -67,27 +85,60 @@ def process_single_task(main_video, low_views_pool, task_index):
     target_dir = os.path.join(BASE_OUTPUT_DIR, folder_name)
     os.makedirs(target_dir, exist_ok=True)
 
-    print(f"[任务 {task_index}] 正在并发下载主视频...")
+    print(f"[任务 {task_index}] 正在处理主视频: {main_video['title']}")
 
     # 1. 下载主视频
     main_audio, main_duration = download_audio(main_video['url'], target_dir, "1")
 
-    # 2. 排队转录主视频
-    safe_transcribe(main_audio, os.path.join(target_dir, "1.txt"))
+    # 2. 异步提交转录任务（非阻塞）
+    transcribe_executor.submit(safe_transcribe, main_audio, os.path.join(target_dir, "1.txt"))
 
     # 3. 写入历史记录
     update_history(video_id)
 
-    # 4. 补齐逻辑
-    if main_duration < 3600 and low_views_pool:
-        # 取出一个低播放视频（注意：由于任务数只有3个，简单pop即可）
+    # 4. 补齐逻辑：循环下载直到满足 1h (3600秒)
+    current_total_duration = main_duration
+    filler_count = 2  # 补齐视频的文件名从 "2" 开始
+
+    filler_futures = []
+    filler_txt_paths = []
+
+    while current_total_duration < 3600:
+        if not low_views_pool:
+            print(f"  [任务 {task_index}] 提示：低播放量池已空，无法继续补齐。")
+            break
+
         try:
             filler_video = low_views_pool.pop(0)
-            print(f"  [任务 {task_index}] 时长不足1h，下载补齐视频...")
-            filler_audio, _ = download_audio(filler_video['url'], target_dir, "2")
-            safe_transcribe(filler_audio, os.path.join(target_dir, "2.txt"))
+            print(
+                f"  [任务 {task_index}] 当前时长 {current_total_duration}s，正在下载第 {filler_count - 1} 个补齐视频...")
+
+            # 下载补齐视频
+            filler_audio, filler_duration = download_audio(
+                filler_video['url'],
+                target_dir,
+                str(filler_count)
+            )
+
+            # 提交转录并记录路径以便后续合并
+            txt_path = os.path.join(target_dir, f"{filler_count}.txt")
+            future = transcribe_executor.submit(safe_transcribe, filler_audio, txt_path)
+
+            filler_futures.append(future)
+            filler_txt_paths.append(txt_path)
+
+            current_total_duration += filler_duration
+            filler_count += 1
+
         except IndexError:
-            pass
+            break
+
+    # 如果有补齐视频，启动一个后台线程等待转录完成并合并
+    if filler_futures:
+        threading.Thread(target=wait_and_merge_fillers, args=(target_dir, filler_futures, filler_txt_paths),
+                         daemon=True).start()
+
+    print(f"[任务 {task_index}] 下载阶段已完成，转录任务已全部进入队列。当前下载总时长: {current_total_duration}s")
 
 
 def run_pipeline():

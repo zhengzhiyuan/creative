@@ -14,7 +14,7 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
 # --- 核心配置 ---
 # INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公車禍癱瘓/final.txt"
 INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公出差去接公公/final.txt"
-SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output"
+SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output1080"
 
 BASE_DIR = os.path.dirname(INPUT_TXT)
 TEMP_DIR = os.path.join(BASE_DIR, "temp_chunks")
@@ -23,13 +23,14 @@ FINAL_SRT = os.path.join(BASE_DIR, "subtitle.srt")
 FINAL_VIDEO = os.path.join(BASE_DIR, "final_video_output.mp4")
 
 VOICE = "zh-CN-XiaoxiaoNeural"
-TARGET_RES = (1280, 720)
+# 修改点：支持 1080P 分辨率
+TARGET_RES = (1920, 1080)
 CLIP_DUR = 4
 MAX_CONCURRENT_REQUESTS = 3
 CHUNK_LIMIT = 600
 
-# --- 优化点：降低码率 ---
-TARGET_BITRATE = "2500k"
+# 修改点：1080P 建议码率上调至 5000k，画质更清晰
+TARGET_BITRATE = "5000k"
 
 
 # --- 1. TTS 并发逻辑 ---
@@ -123,7 +124,7 @@ def create_video(total_duration):
 
         while curr_chunk_p < chunk_dur:
             v_path = random.choice(all_vids)
-            v = VideoFileClip(v_path)
+            v = VideoFileClip(v_path, target_resolution=TARGET_RES) # 强制目标分辨率
             opened_vfc.append(v)
             dur = min(CLIP_DUR, v.duration, chunk_dur - curr_chunk_p)
             start = random.uniform(0, max(0, v.duration - dur))
@@ -143,8 +144,8 @@ def create_video(total_duration):
                 bitrate=TARGET_BITRATE,
                 audio_codec="aac",
                 fps=24,
-                threads=4,             # 优化点：限制线程，防止 Intel Mac 死机
-                ffmpeg_params=["-movflags", "+faststart"], # 优化点：支持 YouTube 预处理
+                threads=4,             # 针对 Intel Mac 优化的线程数
+                ffmpeg_params=["-movflags", "+faststart"],
                 logger="bar"
             )
             audio_chunk.close()
@@ -166,8 +167,8 @@ def create_video(total_duration):
         bitrate=TARGET_BITRATE,
         audio_codec="aac",
         fps=24,
-        threads=4,             # 优化点：限制线程，防止 Intel Mac 死机
-        ffmpeg_params=["-movflags", "+faststart"], # 优化点：支持 YouTube 预处理
+        threads=4,
+        ffmpeg_params=["-movflags", "+faststart"],
         logger="bar"
     )
 

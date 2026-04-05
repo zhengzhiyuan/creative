@@ -147,7 +147,7 @@ def create_video(total_duration):
                 bitrate="5000k",
                 audio_codec="aac",
                 fps=24,
-                logger=None
+                logger="bar"
             )
             audio_chunk.close()
 

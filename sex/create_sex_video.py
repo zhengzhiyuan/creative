@@ -12,7 +12,8 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- 核心配置 ---
-INPUT_TXT = "/Users/huangyun/git/creative/output1/task_和哥哥的秘密/final.txt"
+# INPUT_TXT = "/Users/huangyun/git/creative/output1/task_和哥哥的秘密/final.txt"
+INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公車禍癱瘓/final.txt"
 SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output"
 
 BASE_DIR = os.path.dirname(INPUT_TXT)

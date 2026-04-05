@@ -5,7 +5,8 @@ import hashlib
 # --- 核心配置 ---
 TARGET_RES = "1280x720"
 FPS = 24
-BITRATE = "5000k"
+# 建议改为 3000k，对于无音频的 720P 预处理素材足够清晰且省空间
+BITRATE = "3000k"
 
 
 def get_file_md5(file_path):

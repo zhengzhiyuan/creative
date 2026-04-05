@@ -39,18 +39,15 @@ def process_single_video(task_info):
     crop_offset = random.uniform(0.09, 0.11)
 
     # --- Intel Mac 专项优化滤镜链 ---
-    # 1. 彻底移除 flags=lanczos，改为 bilinear (Intel CPU 负担最轻)
-    # 2. 将 unsharp 这种耗 CPU 的滤镜放在最后，且缩小半径
-    # 3. 移除 noise 滤镜 (Intel CPU 处理噪声极其缓慢，改为简单的微弱色彩偏移)
     complex_filter = (
         f"trim=0:{keep_duration},setpts=PTS-STARTPTS,"
-        f"crop=iw:ih*0.9:0:ih*{crop_offset}," 
+        f"crop=iw:ih*0.9:0:ih*{crop_offset},"
         f"split=2[bg][fg];"
         f"[bg]scale=1920:1080:flags=bilinear,boxblur={blur_value}:3[bg_blur];"
         f"[fg]scale=-1:1080:flags=bilinear[fg_scale];"
         f"[bg_blur][fg_scale]overlay=(W-w)/2:(H-h)/2,"
         f"eq=brightness={r_bright}:contrast={r_cont},"
-        f"unsharp=3:3:0.5:3:3:0.0" # 放在最后，只对合成后的成品做一次薄处理
+        f"unsharp=3:3:0.5:3:3:0.0"
     )
 
     cmd = [
@@ -58,11 +55,11 @@ def process_single_video(task_info):
         '-vf', complex_filter,
         '-af', f"atrim=0:{keep_duration},asetpts=PTS-STARTPTS,volume={random.uniform(0.98, 1.02)}",
         '-c:v', 'h264_videotoolbox',
-        '-b:v', '6000k',
-        '-profile:v', 'main',           # ✨ Intel 芯片在 Main Profile 下兼容性和速度最稳
+        '-b:v', '4500k',  # 优化：4500k 在 1080P 下体积与画质最平衡，减少上传压力
+        '-profile:v', 'main',
         '-realtime', '1',
-        '-threads', '0',
-        '-c:a', 'aac', '-b:a', '128k', # 稍微降低音频码率减少封装压力
+        '-threads', '2',  # 优化：限制单任务线程，防止 Intel CPU 瞬间满载死机
+        '-c:a', 'aac', '-b:a', '128k',
         '-map_metadata', '-1',
         '-f', 'mpegts', output_ts
     ]
@@ -83,14 +80,15 @@ def run_video_pipeline(input_dir, temp_dir, output_file):
         [f for f in os.listdir(input_dir) if f.lower().endswith(('.mp4', '.mov', '.mkv')) and not f.startswith('.')])
     if not files: return print("未发现视频。")
 
-    print(f"🚀 [1080P 高清去重模式] 正在处理 {len(files)} 个视频...")
+    print(f"🚀 [1080P 高清优化模式] 正在处理 {len(files)} 个视频...")
     tasks = []
     for i, f in enumerate(files):
         info = get_video_info(os.path.join(input_dir, f))
         if info:
             tasks.append((os.path.join(input_dir, f), os.path.join(temp_dir, f"{i:04d}.ts"), info))
 
-    with ProcessPoolExecutor(max_workers=4) as executor:
+    # 优化：Intel 芯片并行数建议设为 2，设为 4 极易导致 I/O 阻塞引发死机
+    with ProcessPoolExecutor(max_workers=2) as executor:
         results = list(executor.map(process_single_video, tasks))
 
     valid_ts = [r for r in results if r is not None and os.path.exists(r)]
@@ -104,15 +102,20 @@ def run_video_pipeline(input_dir, temp_dir, output_file):
             with open(ts_file, 'rb') as infile:
                 shutil.copyfileobj(infile, outfile)
 
-    # 最终合并时保留高清参数
-    subprocess.run(['ffmpeg', '-y', '-i', combined_ts, '-c', 'copy', '-map_metadata', '-1', output_file],
-                   capture_output=True)
+    # 最终合并优化：加入 faststart 标记，方便 YouTube 快速转码和播放
+    subprocess.run([
+        'ffmpeg', '-y', '-i', combined_ts,
+        '-c', 'copy',
+        '-map_metadata', '-1',
+        '-movflags', '+faststart',
+        output_file
+    ], capture_output=True)
+
     if os.path.exists(combined_ts): os.remove(combined_ts)
     print(f"✅ 完成！总耗时: {time.time() - start_time:.2f}s")
 
 
 if __name__ == "__main__":
-    # 请确保这里的路径是你最新下载的 10~20min 素材文件夹
     MY_INPUT = "/Users/huangyun/git/creative/ent/my_creative_material/xxx_folder"
     MY_TEMP = "/Users/huangyun/Desktop/搬运/ENT/temp_processed"
     MY_OUTPUT = "/Users/huangyun/Desktop/搬运/ENT/target/final_1080p_work.mp4"

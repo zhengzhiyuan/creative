@@ -28,18 +28,19 @@ def save_to_csv(data, folder_path):
         writer.writerow(data)
 
 
-async def get_bili_video_tasks(hot_kw, history_kw, target_total_range=(25, 40)):
+async def get_bili_video_tasks(hot_kw, history_kw, target_total_range=(10, 20)):  # 修改范围至10~20min
     all_hot_candidates = []
     all_history_candidates = []
-    max_total_sec = target_total_range[1] * 60
 
     async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=False, proxy={"server": PROXY_URL})
+        browser = await p.chromium.launch(headless=False
+                                          # , proxy={"server": PROXY_URL}
+                                          )
         context = await browser.new_context(
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
         page = await context.new_page()
 
-        async def search_and_pick(search_kw, is_hot=True, min_len=60, max_len=1800):
+        async def search_and_pick(search_kw, is_hot=True, min_len=60, max_len=1200):  # 最大素材长度配合20min阈值
             url = f"https://search.bilibili.com/all?keyword={search_kw}"
             print(f"\n🌐 正在检索关键词: {search_kw}")
             try:
@@ -56,7 +57,7 @@ async def get_bili_video_tasks(hot_kw, history_kw, target_total_range=(25, 40)):
 
                 found_count = 0
                 for card in cards:
-                    if found_count >= 8: break  # 检索备选池扩大到8个，应对下载失败
+                    if found_count >= 8: break
 
                     duration_el = await card.query_selector(".bili-video-card__stats__duration, .duration")
                     if not duration_el: continue
@@ -85,22 +86,17 @@ async def get_bili_video_tasks(hot_kw, history_kw, target_total_range=(25, 40)):
         await search_and_pick(history_kw, is_hot=False)
         await browser.close()
 
-    # --- 强化版动态匹配：区分主视频和候补副视频 ---
     final_tasks = []
-
-    # 1. 确定主视频任务 (1个)
     if all_hot_candidates:
         url, sec, d_str = all_hot_candidates[0]
         final_tasks.append({"url": url, "sec": sec, "d_str": d_str, "type": "hot"})
-
-    # 2. 确定副视频备选池 (全部历史视频作为候补)
     for url, sec, d_str in all_history_candidates:
         final_tasks.append({"url": url, "sec": sec, "d_str": d_str, "type": "history"})
 
     return final_tasks
 
 
-async def download_with_ytdlp(tasks, hot_kw, target_min_sec=1500):  # 1500s = 25min
+async def download_with_ytdlp(tasks, hot_kw, target_min_sec=600):  # 修改目标为10分钟
     if not tasks:
         print("\n终止: 没有符合要求的素材。")
         return None
@@ -116,36 +112,39 @@ async def download_with_ytdlp(tasks, hot_kw, target_min_sec=1500):  # 1500s = 25
     if not os.path.exists(final_dir): os.makedirs(final_dir)
 
     # 状态控制
-    SUCCESS_LIMIT_HISTORY = 3  # 副视频最多3个
+    MAX_TOTAL_SEC = 1200  # 硬性上限20分钟，防止素材过多
     actual_hot_success = 0
     actual_history_success = 0
     current_total_sec = 0
 
+    # 修改为 1080P 优先配置
     ydl_opts_base = {
-        'format': 'bestvideo[height<=480][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=480]+bestaudio/best',
+        'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best',
         'merge_output_format': 'mp4',
         'nocheckcertificate': True,
         'socket_timeout': 60,
         'retries': 5,
         'cookiesfrombrowser': ('chrome',),
-        'proxy': PROXY_URL,
+        # 'proxy': PROXY_URL,
         'quiet': True,
         'no_warnings': True,
     }
 
-    print(f"\n🚀 开始动态补位下载 (目标: 1主+3副，且总长 > {target_min_sec // 60}min)...")
+    print(f"\n🚀 开始 1080P 素材下载 (目标时长: 10~20min)...")
 
     for task in tasks:
-        # 熔断逻辑：
-        # 如果是副视频，且已经成功下载了3个，或者总时长已达标，则跳过
+        # 如果总时长已超过上限 20min，停止下载
+        if current_total_sec >= MAX_TOTAL_SEC:
+            break
+
         if task['type'] == "history":
-            if actual_history_success >= SUCCESS_LIMIT_HISTORY or current_total_sec >= target_min_sec:
+            # 如果是副视频，且总时长已达到最小目标 10min，则跳过后续
+            if current_total_sec >= target_min_sec:
                 continue
-        # 如果是主视频且已成功，跳过（防止重复）
+
         if task['type'] == "hot" and actual_hot_success >= 1:
             continue
 
-        # 确定文件名
         if task['type'] == "hot":
             filename = "1.mp4"
         else:
@@ -169,7 +168,6 @@ async def download_with_ytdlp(tasks, hot_kw, target_min_sec=1500):  # 1500s = 25
                 }
                 save_to_csv(metadata, final_dir)
 
-                # 下载成功后更新状态
                 if task['type'] == "hot":
                     actual_hot_success += 1
                 else:
@@ -179,7 +177,7 @@ async def download_with_ytdlp(tasks, hot_kw, target_min_sec=1500):  # 1500s = 25
                 print(f"✨ 下载成功! 当前已累积时长: {current_total_sec // 60}分{current_total_sec % 60}秒")
 
             except Exception as e:
-                print(f"❌ 下载失败，将自动尝试后续候补视频补位: {e}")
+                print(f"❌ 下载失败: {e}")
 
     print(
         f"\n✅ 任务结束 | 成功下载: {actual_hot_success}主 + {actual_history_success}副 | 总长: {current_total_sec // 60}min")
@@ -191,10 +189,10 @@ if __name__ == "__main__":
     history_kw = input("📜 输入黑历史词: ").strip()
     if hot_kw and history_kw:
         async def run():
-            # 搜索时放宽范围，多拿备选
-            tasks = await get_bili_video_tasks(hot_kw, history_kw, target_total_range=(25, 40))
-            # 下载时传入目标最小秒数 (25分钟 = 1500秒)
-            await download_with_ytdlp(tasks, hot_kw, target_min_sec=1500)
+            # 搜索匹配 10~20min
+            tasks = await get_bili_video_tasks(hot_kw, history_kw, target_total_range=(10, 20))
+            # 下载目标最小 10min (600秒)
+            await download_with_ytdlp(tasks, hot_kw, target_min_sec=600)
 
 
         asyncio.run(run())

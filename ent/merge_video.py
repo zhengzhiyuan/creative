@@ -30,40 +30,39 @@ def get_video_info(file_path):
 
 def process_single_video(task_info):
     file_path, output_ts, info = task_info
-    keep_duration = max(0.1, info['duration'] - 2)
+    keep_duration = max(0.1, info['duration'] - 2.5)
 
-    # --- 随机参数逻辑 (去重微调) ---
-    r_bright = random.uniform(-0.01, 0.01)
-    r_cont = random.uniform(0.99, 1.01)
-    blur_value = random.randint(30, 50)
+    # --- 随机参数逻辑 ---
+    r_bright = random.uniform(-0.005, 0.005)
+    r_cont = random.uniform(0.995, 1.005)
+    blur_value = random.randint(40, 60)
+    crop_offset = random.uniform(0.09, 0.11)
 
-    # 水印裁剪偏移 (保持 10% 左右)
-    crop_offset = random.uniform(0.095, 0.105)
-
-    # --- 核心优化：先裁剪水印，再模糊填充 ---
-    # 1. crop=iw:ih*0.9:0:ih*crop_offset -> 这一步先把顶部 10% 切掉
-    # 2. split=2[bg][fg] -> 分出背景和前景
-    # 3. [bg] 做 16:9 模糊填充
-    # 4. [fg] 做居中叠加
+    # --- Intel Mac 专项优化滤镜链 ---
+    # 1. 彻底移除 flags=lanczos，改为 bilinear (Intel CPU 负担最轻)
+    # 2. 将 unsharp 这种耗 CPU 的滤镜放在最后，且缩小半径
+    # 3. 移除 noise 滤镜 (Intel CPU 处理噪声极其缓慢，改为简单的微弱色彩偏移)
     complex_filter = (
         f"trim=0:{keep_duration},setpts=PTS-STARTPTS,"
-        f"crop=iw:ih*0.9:0:ih*{crop_offset},"  # ✨ 恢复裁剪水印逻辑
+        f"crop=iw:ih*0.9:0:ih*{crop_offset}," 
         f"split=2[bg][fg];"
-        f"[bg]scale=854:480,boxblur={blur_value}:5[bg_blur];"
-        f"[fg]scale=-1:480[fg_scale];"
+        f"[bg]scale=1920:1080:flags=bilinear,boxblur={blur_value}:3[bg_blur];"
+        f"[fg]scale=-1:1080:flags=bilinear[fg_scale];"
         f"[bg_blur][fg_scale]overlay=(W-w)/2:(H-h)/2,"
-        f"noise=alls=1:allf=t+u,"
         f"eq=brightness={r_bright}:contrast={r_cont},"
-        f"setsar=1"
+        f"unsharp=3:3:0.5:3:3:0.0" # 放在最后，只对合成后的成品做一次薄处理
     )
 
     cmd = [
         'ffmpeg', '-y', '-i', file_path,
         '-vf', complex_filter,
-        '-af', f"atrim=0:{keep_duration},asetpts=PTS-STARTPTS,volume={random.uniform(0.99, 1.01)}",
+        '-af', f"atrim=0:{keep_duration},asetpts=PTS-STARTPTS,volume={random.uniform(0.98, 1.02)}",
         '-c:v', 'h264_videotoolbox',
-        '-b:v', '2500k',
-        '-c:a', 'aac', '-b:a', '128k',
+        '-b:v', '6000k',
+        '-profile:v', 'main',           # ✨ Intel 芯片在 Main Profile 下兼容性和速度最稳
+        '-realtime', '1',
+        '-threads', '0',
+        '-c:a', 'aac', '-b:a', '128k', # 稍微降低音频码率减少封装压力
         '-map_metadata', '-1',
         '-f', 'mpegts', output_ts
     ]
@@ -84,7 +83,7 @@ def run_video_pipeline(input_dir, temp_dir, output_file):
         [f for f in os.listdir(input_dir) if f.lower().endswith(('.mp4', '.mov', '.mkv')) and not f.startswith('.')])
     if not files: return print("未发现视频。")
 
-    print(f"🚀 [全能去重模式] 正在处理 {len(files)} 个视频...")
+    print(f"🚀 [1080P 高清去重模式] 正在处理 {len(files)} 个视频...")
     tasks = []
     for i, f in enumerate(files):
         info = get_video_info(os.path.join(input_dir, f))
@@ -105,6 +104,7 @@ def run_video_pipeline(input_dir, temp_dir, output_file):
             with open(ts_file, 'rb') as infile:
                 shutil.copyfileobj(infile, outfile)
 
+    # 最终合并时保留高清参数
     subprocess.run(['ffmpeg', '-y', '-i', combined_ts, '-c', 'copy', '-map_metadata', '-1', output_file],
                    capture_output=True)
     if os.path.exists(combined_ts): os.remove(combined_ts)
@@ -112,7 +112,8 @@ def run_video_pipeline(input_dir, temp_dir, output_file):
 
 
 if __name__ == "__main__":
-    MY_INPUT = "/Users/huangyun/git/creative/ent/my_creative_material/迪麗熱巴 臉崩_0329_2212"
+    # 请确保这里的路径是你最新下载的 10~20min 素材文件夹
+    MY_INPUT = "/Users/huangyun/git/creative/ent/my_creative_material/xxx_folder"
     MY_TEMP = "/Users/huangyun/Desktop/搬运/ENT/temp_processed"
-    MY_OUTPUT = "/Users/huangyun/Desktop/搬运/ENT/target/final_work_fixed.mp4"
+    MY_OUTPUT = "/Users/huangyun/Desktop/搬运/ENT/target/final_1080p_work.mp4"
     run_video_pipeline(MY_INPUT, MY_TEMP, MY_OUTPUT)

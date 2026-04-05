@@ -12,7 +12,6 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- 核心配置 ---
-# INPUT_TXT = "/Users/huangyun/git/creative/output1/task_和哥哥的秘密/final.txt"
 INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公車禍癱瘓/final.txt"
 SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output"
 
@@ -29,7 +28,6 @@ MAX_CONCURRENT_REQUESTS = 3
 CHUNK_LIMIT = 600
 
 # --- 优化点：降低码率 ---
-# 720P 建议 2000k-3000k，既能保证画质，又能大幅减小体积并提速
 TARGET_BITRATE = "2500k"
 
 
@@ -141,9 +139,11 @@ def create_video(total_duration):
             final_chunk.write_videofile(
                 chunk_path,
                 codec="h264_videotoolbox",
-                bitrate=TARGET_BITRATE, # 应用优化码率
+                bitrate=TARGET_BITRATE,
                 audio_codec="aac",
                 fps=24,
+                threads=2,             # 优化点：限制线程，防止 Intel Mac 死机
+                ffmpeg_params=["-movflags", "+faststart"], # 优化点：支持 YouTube 预处理
                 logger="bar"
             )
             audio_chunk.close()
@@ -162,9 +162,11 @@ def create_video(total_duration):
     final_video.write_videofile(
         FINAL_VIDEO,
         codec="h264_videotoolbox",
-        bitrate=TARGET_BITRATE, # 应用优化码率
+        bitrate=TARGET_BITRATE,
         audio_codec="aac",
         fps=24,
+        threads=2,             # 优化点：限制线程，防止 Intel Mac 死机
+        ffmpeg_params=["-movflags", "+faststart"], # 优化点：支持 YouTube 预处理
         logger="bar"
     )
 

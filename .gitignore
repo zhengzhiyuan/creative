@@ -1,9 +1,11 @@
 # 忽略所有素材预处理生成的输出文件夹
-output/
-**/output/
+output/**
+**/output/**
 
 # 忽略 TTS 过程中的音频碎片目录
-temp_chunks/
+temp_chunks/**
 
 # 忽略合成过程中的临时视频片段
 temp_part_*.mp4
+
+**.mp4

@@ -12,8 +12,7 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- 核心配置 ---
-INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公車禍癱瘓/final.txt"
-# 注意：这里已经修改为指向预处理后的 output 文件夹
+INPUT_TXT = "/Users/huangyun/git/creative/output1/task_和哥哥的秘密/final.txt"
 SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output"
 
 BASE_DIR = os.path.dirname(INPUT_TXT)
@@ -26,10 +25,14 @@ VOICE = "zh-CN-XiaoxiaoNeural"
 TARGET_RES = (1280, 720)
 CLIP_DUR = 4
 MAX_CONCURRENT_REQUESTS = 3
-CHUNK_LIMIT = 600  # 内存优化点：每 10 分钟合成一个临时视频
+CHUNK_LIMIT = 600
+
+# --- 优化点：降低码率 ---
+# 720P 建议 2000k-3000k，既能保证画质，又能大幅减小体积并提速
+TARGET_BITRATE = "2500k"
 
 
-# --- 1. TTS 并发逻辑 (保持不变) ---
+# --- 1. TTS 并发逻辑 ---
 async def fetch_tts_chunk(semaphore, index, text, voice, temp_dir):
     async with semaphore:
         chunk_mp3 = os.path.join(temp_dir, f"{index}.mp3")
@@ -92,7 +95,7 @@ def generate_noise(duration_ms):
     return AudioSegment((samples * 32767).astype(np.int16).tobytes(), frame_rate=44100, sample_width=2, channels=1)
 
 
-# --- 2. 视频分段逻辑 (已针对预处理素材优化) ---
+# --- 2. 视频分段逻辑 ---
 def create_video(total_duration):
     if total_duration <= 0: return
 
@@ -122,21 +125,14 @@ def create_video(total_duration):
             v_path = random.choice(all_vids)
             v = VideoFileClip(v_path)
             opened_vfc.append(v)
-
-            # 确定截取长度
             dur = min(CLIP_DUR, v.duration, chunk_dur - curr_chunk_p)
             start = random.uniform(0, max(0, v.duration - dur))
-
-            # --- 优化重点：由于素材已预处理，直接截取即可，无需再做像素运算 ---
             clip = v.subclip(start, start + dur).without_audio()
-
             clips.append(clip)
             curr_chunk_p += dur
 
-        # 合成当前视觉段
         visual_chunk = concatenate_videoclips(clips, method="compose")
 
-        # 绑定对应音频段
         with AudioFileClip(FINAL_MP3) as audio_full:
             audio_chunk = audio_full.subclip(start_t, end_t)
             final_chunk = visual_chunk.set_audio(audio_chunk)
@@ -144,14 +140,13 @@ def create_video(total_duration):
             final_chunk.write_videofile(
                 chunk_path,
                 codec="h264_videotoolbox",
-                bitrate="5000k",
+                bitrate=TARGET_BITRATE, # 应用优化码率
                 audio_codec="aac",
                 fps=24,
                 logger="bar"
             )
             audio_chunk.close()
 
-        # 立即释放内存
         visual_chunk.close()
         for c in opened_vfc:
             try:
@@ -160,20 +155,18 @@ def create_video(total_duration):
                 pass
         chunk_files.append(chunk_path)
 
-    # 最后物理合并所有临时片段
     print("所有分段合成完成，执行最终物理拼接...")
     final_clips = [VideoFileClip(p) for p in chunk_files]
     final_video = concatenate_videoclips(final_clips, method="compose")
     final_video.write_videofile(
         FINAL_VIDEO,
         codec="h264_videotoolbox",
-        bitrate="5000k",
+        bitrate=TARGET_BITRATE, # 应用优化码率
         audio_codec="aac",
         fps=24,
         logger="bar"
     )
 
-    # 清理句柄和临时文件
     for c in final_clips: c.close()
     for p in chunk_files:
         try:
@@ -192,7 +185,6 @@ async def main():
         raw_lines = [line.strip() for line in f if len(line.strip()) > 1]
     if not raw_lines: return
 
-    # 智能合并文本
     MIN_CHAR_COUNT = 200
     processed_chunks = []
     temp_buffer = []
@@ -206,13 +198,9 @@ async def main():
             current_count = 0
     if temp_buffer: processed_chunks.append("。".join(temp_buffer))
 
-    # 1. TTS 阶段
     total_sec = await tts_with_subtitles(processed_chunks)
-
-    # 2. 视频合成阶段
     create_video(total_sec)
 
-    # 3. 扫尾工作
     if os.path.exists(TEMP_DIR):
         for file in os.listdir(TEMP_DIR):
             try:

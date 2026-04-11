@@ -12,7 +12,6 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- 核心配置 ---
-# INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公車禍癱瘓/final.txt"
 INPUT_TXT = "/Users/huangyun/git/creative/output1/task_老公出差去接公公/final.txt"
 SOURCE_VIDEOS_DIR = "/Users/huangyun/Desktop/搬运/sex_creative/游戏波/output1080"
 
@@ -23,14 +22,13 @@ FINAL_SRT = os.path.join(BASE_DIR, "subtitle.srt")
 FINAL_VIDEO = os.path.join(BASE_DIR, "final_video_output.mp4")
 
 VOICE = "zh-CN-XiaoxiaoNeural"
-# 修改点：支持 1080P 分辨率
-TARGET_RES = (1920, 1080)
+
+# --- 横屏 1080P 关键参数 ---
+TARGET_RES = (1920, 1080)  # 目标分辨率：宽1920, 高1080
+TARGET_BITRATE = "5000k"
 CLIP_DUR = 4
 MAX_CONCURRENT_REQUESTS = 3
 CHUNK_LIMIT = 600
-
-# 修改点：1080P 建议码率上调至 5000k，画质更清晰
-TARGET_BITRATE = "5000k"
 
 
 # --- 1. TTS 并发逻辑 ---
@@ -103,12 +101,12 @@ def create_video(total_duration):
     all_vids = [os.path.join(SOURCE_VIDEOS_DIR, f) for f in os.listdir(SOURCE_VIDEOS_DIR) if
                 f.endswith(('.mp4', '.mov'))]
     if not all_vids:
-        print(f"❌ 错误：在 {SOURCE_VIDEOS_DIR} 中未找到预处理后的视频文件！")
+        print(f"❌ 错误：在 {SOURCE_VIDEOS_DIR} 中未找到素材！")
         return
 
     chunk_files = []
     num_chunks = int(np.ceil(total_duration / CHUNK_LIMIT))
-    print(f"检测到超长视频，启动分段合成模式：共 {num_chunks} 段...")
+    print(f"启动兼容性 1080P 合成模式：共 {num_chunks} 段...")
 
     for i in range(num_chunks):
         start_t = i * CHUNK_LIMIT
@@ -116,7 +114,7 @@ def create_video(total_duration):
         chunk_dur = end_t - start_t
         chunk_path = os.path.join(BASE_DIR, f"temp_part_{i}.mp4")
 
-        print(f"渲染进度: 第 {i + 1}/{num_chunks} 段 ({start_t}s - {end_t}s)...")
+        print(f"渲染中: 第 {i + 1}/{num_chunks} 段...")
 
         clips = []
         curr_chunk_p = 0
@@ -124,14 +122,34 @@ def create_video(total_duration):
 
         while curr_chunk_p < chunk_dur:
             v_path = random.choice(all_vids)
-            v = VideoFileClip(v_path, target_resolution=TARGET_RES) # 强制目标分辨率
-            opened_vfc.append(v)
+            v = VideoFileClip(v_path)
+
+            # --- 强制处理非标素材：缩放并居中裁剪 ---
+            # 1. 统一缩放：保证短边对齐目标，填满画布
+            if v.aspect_ratio > (16 / 9):  # 太宽了
+                v_resized = v.resize(height=1080)
+            else:  # 太窄了或正好
+                v_resized = v.resize(width=1920)
+
+            opened_vfc.append(v_resized)
+
             dur = min(CLIP_DUR, v.duration, chunk_dur - curr_chunk_p)
             start = random.uniform(0, max(0, v.duration - dur))
-            clip = v.subclip(start, start + dur).without_audio()
+
+            # 2. 提取 subclip 并居中裁切成标准的 1920x1080
+            clip = v_resized.subclip(start, start + dur).without_audio().crop(
+                x_center=v_resized.w / 2,
+                y_center=v_resized.h / 2,
+                width=1920,
+                height=1080
+            )
             clips.append(clip)
             curr_chunk_p += dur
 
+            # 及时释放原始 VideoFileClip
+            v.close()
+
+        # 对于非标素材合成，必须使用 "compose" 模式来正确对齐画布
         visual_chunk = concatenate_videoclips(clips, method="compose")
 
         with AudioFileClip(FINAL_MP3) as audio_full:
@@ -144,7 +162,7 @@ def create_video(total_duration):
                 bitrate=TARGET_BITRATE,
                 audio_codec="aac",
                 fps=24,
-                threads=4,             # 针对 Intel Mac 优化的线程数
+                threads=4,
                 ffmpeg_params=["-movflags", "+faststart"],
                 logger="bar"
             )
@@ -158,7 +176,7 @@ def create_video(total_duration):
                 pass
         chunk_files.append(chunk_path)
 
-    print("所有分段合成完成，执行最终物理拼接...")
+    print("最终物理拼接中...")
     final_clips = [VideoFileClip(p) for p in chunk_files]
     final_video = concatenate_videoclips(final_clips, method="compose")
     final_video.write_videofile(
@@ -217,7 +235,7 @@ async def main():
         except:
             pass
 
-    print("-" * 30 + "\n任务圆满完成！\n" + "-" * 30)
+    print("-" * 30 + "\n兼容性 1080P 合成任务圆满完成！\n" + "-" * 30)
 
 
 if __name__ == "__main__":

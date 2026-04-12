@@ -206,11 +206,11 @@ async def main():
             final_v.write_videofile(
                 output_file,
                 fps=24,
-                codec="libx264",
+                codec="h264_videotoolbox",  # 核心：切换到硬件加速编码器
                 audio_codec="aac",
                 threads=4,
-                preset="superfast",
-                bitrate="5000k"
+                # preset="superfast",       # 必须删掉！硬件编码器不支持此参数
+                bitrate="5000k"  # 建议稍微调高码率，硬件编码在同码率下画质略逊于软件
             )
         finally:
             for res in all_resources:

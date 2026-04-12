@@ -37,64 +37,71 @@ class VideoAutomation:
             if not file_exists: writer.writeheader()
             writer.writerow(data)
 
+    def calculate_relevance(self, title, keyword):
+        """简单相关性评分算法"""
+        title = title.lower()
+        keyword = keyword.lower()
+        # 排除词黑名单
+        blacklist = ["直播", "回放", "合集", "预告", "mv", "混剪"]
+        if any(w in title for w in blacklist):
+            return 0
+        # 计算关键词匹配度
+        score = 0
+        # 1. 关键词完全包含
+        if keyword in title: score += 50
+        # 2. 分词匹配（简单处理）
+        for word in list(keyword):
+            if word in title: score += 2
+        return score
+
     async def _single_search(self, context, keyword, limit):
         async with SEARCH_SEMAPHORE:
-            videos = []
+            candidate_videos = []
             page = await context.new_page()
-            # 模拟随机视口大小，减少被检测概率
-            await page.set_viewport_size(
-                {"width": 1280 + random.randint(0, 100), "height": 720 + random.randint(0, 100)})
+            await page.set_viewport_size({"width": 1280, "height": 720})
 
             url = f"https://search.bilibili.com/all?keyword={keyword}"
             try:
-                # 1. 优化：改用更稳健的等待方式
                 await page.goto(url, wait_until="load", timeout=30000)
-
-                # 2. 优化：模拟真实滚动，触发 B 站懒加载
                 await page.evaluate("window.scrollTo(0, 500)")
                 await asyncio.sleep(1)
 
-                try:
-                    # 尝试点击排序（非必须，失败则跳过）
-                    sort_btn = await page.get_by_text("最多点击").first
-                    if await sort_btn.is_visible():
-                        await sort_btn.click()
-                        await asyncio.sleep(2)  # 等待排序后的列表加载
-                except:
-                    pass
-
-                # 3. 优化：等待选择器，并稍微延长超时到 20s
-                selector = ".bili-video-card, .video-list-item, .video-item"
-                await page.wait_for_selector(selector, timeout=20000, state="visible")
-
+                selector = ".bili-video-card, .video-list-item"
+                await page.wait_for_selector(selector, timeout=20000)
                 cards = await page.query_selector_all(selector)
-                print(f"✅ 关键词 [{keyword}] 找到 {len(cards)} 个结果")
 
                 for card in cards:
-                    if len(videos) >= limit: break
+                    # 获取标题用于校验
+                    title_el = await card.query_selector("h3, .title")
                     link_el = await card.query_selector("a[href*='/video/BV']")
-                    if link_el:
+
+                    if title_el and link_el:
+                        title = await title_el.inner_text()
                         href = await link_el.get_attribute("href")
-                        # 格式化 URL
-                        raw_url = f"https:{href}" if href.startswith("//") else href
-                        clean_url = raw_url.split("?")[0]
-                        if "bilibili.com/video/" in clean_url:
-                            videos.append(clean_url)
+
+                        # 执行算法过滤
+                        score = self.calculate_relevance(title, keyword)
+                        if score > 10:  # 只有超过基础分才加入候选列表
+                            clean_url = (f"https:{href}" if href.startswith("//") else href).split("?")[0]
+                            candidate_videos.append({"url": clean_url, "score": score})
+
+                # 按得分排序，取前 limit 个
+                candidate_videos.sort(key=lambda x: x['score'], reverse=True)
+                final_urls = [v['url'] for v in candidate_videos[:limit]]
+                print(f"✅ 关键词 [{keyword}] 检索完成，筛选出 {len(final_urls)} 个高质量匹配结果")
+                return final_urls
+
             except Exception as e:
-                print(f"⚠️ 关键词 [{keyword}] 检索超时或异常: {e}")
+                print(f"⚠️ 检索异常: {e}")
             finally:
                 await page.close()
-            return videos
+            return []
 
     async def batch_search_bili(self, keywords, limit=2):
         all_found = []
         async with async_playwright() as p:
             browser = await p.chromium.launch(headless=True)
-            # 增加更加真实的浏览器环境参数
-            context = await browser.new_context(
-                user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-                viewport={"width": 1920, "height": 1080}
-            )
+            context = await browser.new_context(user_agent="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)")
             tasks = [self._single_search(context, kw, limit) for kw in keywords]
             results = await asyncio.gather(*tasks)
             for r in results: all_found.extend(r)
@@ -103,11 +110,10 @@ class VideoAutomation:
 
     def download_with_ytdlp_enhanced(self, url, save_path, keyword, filename, act_path):
         ydl_opts = {
-            'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/bestvideo[height<=1080]+bestaudio/best',
+            'format': 'bestvideo[height<=1080][vcodec^=avc1]+bestaudio[acodec^=mp4a]/best',
             'merge_output_format': 'mp4',
             'outtmpl': save_path,
             'quiet': True,
-            'nocheckcertificate': True,
             'cookiesfrombrowser': ('chrome',),
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
@@ -129,10 +135,9 @@ class VideoAutomation:
         return AudioFileClip(path)
 
     def process_clip(self, clip, target_w=1920, target_h=1080):
-        # 裁剪并 resize
+        # 深度裁剪彻底去除水印 (顶部12% 底部12%)
         y1, y2 = int(clip.h * 0.12), int(clip.h * 0.88)
         cropped = vfx.crop(clip, x1=0, y1=y1, x2=clip.w, y2=y2)
-        # 使用 on_color 替代 Composite 提高合成速度
         return cropped.resize(height=target_h).on_color(size=(target_w, target_h), color=(0, 0, 0), pos='center')
 
     def get_clips(self, folder, target_dur):
@@ -174,7 +179,7 @@ async def main():
         act_path = os.path.join(auto.project_dir, act_id)
         os.makedirs(act_path, exist_ok=True)
 
-        # 1. 采集
+        # 1. 采集（带语义过滤）
         unique_urls = await auto.batch_search_bili(act_info['search_queries'], limit=2)
 
         # 2. 下载
@@ -197,26 +202,23 @@ async def main():
                 a_clip)
             all_video_parts.append(act_combined)
 
-    # 4. 导出
+    # 4. 导出 (VideoToolbox 硬件加速)
     if all_video_parts:
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_1080P.mp4")
         final_v = concatenate_videoclips(all_video_parts, method="compose")
-        print(f"\n🎬 开始合成渲染 (设置 threads=4)...")
         try:
             final_v.write_videofile(
                 output_file,
                 fps=24,
-                codec="h264_videotoolbox",  # 核心：切换到硬件加速编码器
+                codec="h264_videotoolbox",
                 audio_codec="aac",
                 threads=4,
-                # preset="superfast",       # 必须删掉！硬件编码器不支持此参数
-                bitrate="5000k"  # 建议稍微调高码率，硬件编码在同码率下画质略逊于软件
+                bitrate="5000k"
             )
         finally:
             for res in all_resources:
                 try:
                     res.close()
-                    if hasattr(res, 'reader'): res.reader.close()
                 except:
                     pass
 

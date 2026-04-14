@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 PROXY = "http://127.0.0.1:7897"
 TOTAL_TASK_LIMIT = 5  # 每次执行程序处理的总任务数
 MAX_DOWNLOAD_THREADS = 3  # 下载并发数
-VIEW_THRESHOLD = 200
+VIEW_THRESHOLD = 2000
 MIN_DURATION = 60  # 过滤掉短视频 (Shorts)
 CONTENT_LIMIT = 1000  # 文本截取字数上限
 WHISPER_MODEL = "base"

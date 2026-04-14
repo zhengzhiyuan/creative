@@ -12,7 +12,7 @@ MAX_DOWNLOAD_THREADS = 3  # 下载并发数
 VIEW_THRESHOLD = 2000
 MIN_DURATION = 60  # 过滤掉短视频 (Shorts)
 CONTENT_LIMIT = 1000  # 文本截取字数上限
-WHISPER_MODEL = "base"
+WHISPER_MODEL = "small"
 OUTPUT_DIR = "./ytb_contents_ready"
 
 # 强制将 Node.js 路径加入系统环境

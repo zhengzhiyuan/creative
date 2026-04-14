@@ -15,10 +15,6 @@ import moviepy.video.fx.all as vfx
 from datetime import datetime
 
 # ================= 配置区 =================
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-JSON_PATH = os.path.join(CURRENT_DIR, "ent_v")
-OUTPUT_ROOT = os.path.join(CURRENT_DIR, "video_projects")
-MAX_DOWNLOAD_PER_ACT = 3
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 SEARCH_SEMAPHORE = asyncio.Semaphore(2)
 
@@ -29,8 +25,20 @@ TARGET_H = 480
 # ==========================================
 
 class VideoAutomation:
-    def __init__(self, project_name):
-        self.project_dir = os.path.join(OUTPUT_ROOT, f"{project_name}_{datetime.now().strftime('%m%d_%H%M')}")
+    def __init__(self, project_name, json_path, output_root, max_download_per_act=3):
+        """
+        初始化视频自动化处理类
+        
+        Args:
+            project_name: 项目名称
+            json_path: JSON配置文件路径（必需）
+            output_root: 输出根目录（必需）
+            max_download_per_act: 每个场景最大下载数量，默认为3
+        """
+        self.json_path = json_path
+        self.output_root = output_root
+        self.max_download_per_act = max_download_per_act
+        self.project_dir = os.path.join(self.output_root, f"{project_name}_{datetime.now().strftime('%m%d_%H%M')}")
         os.makedirs(self.project_dir, exist_ok=True)
 
     def save_to_csv(self, data, act_path):
@@ -204,13 +212,26 @@ class VideoAutomation:
         return clips, opened_vids
 
 
-async def main():
-    if not os.path.exists(JSON_PATH): return
-    with open(JSON_PATH, 'r', encoding='utf-8') as f:
+async def main(json_path, output_root, max_download_per_act=3):
+    """
+    主函数 - 支持动态参数传入
+    
+    Args:
+        json_path: JSON配置文件路径（必需）
+        output_root: 输出根目录（必需）
+        max_download_per_act: 每个场景最大下载数量，默认为3
+    """
+    if not os.path.exists(json_path): 
+        print(f"⚠️ JSON文件不存在: {json_path}")
+        return
+    
+    with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     p_name = re.sub(r'[\\/:*?"<>|]', '_', data['extreme_titles'][0][:10])
-    auto = VideoAutomation(p_name)
+    auto = VideoAutomation(p_name, json_path=json_path, 
+                          output_root=output_root,
+                          max_download_per_act=max_download_per_act)
     all_video_parts, all_resources = [], []
 
     for act_id, act_info in data['video_script'].items():
@@ -221,7 +242,7 @@ async def main():
         download_tasks = [
             asyncio.to_thread(auto.download_with_ytdlp_enhanced, url, os.path.join(act_path, f"raw_{i}.mp4"),
                               act_info['search_queries'][0], f"raw_{i}.mp4", act_path) for i, url in
-            enumerate(unique_urls[:MAX_DOWNLOAD_PER_ACT])]
+            enumerate(unique_urls[:auto.max_download_per_act])]
         if download_tasks: await asyncio.gather(*download_tasks)
 
         a_path = os.path.join(act_path, "voice.mp3")
@@ -254,4 +275,7 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(
+        json_path="/path/to/your/config.json",
+        output_root="/path/to/output/directory"
+    ))

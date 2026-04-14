@@ -7,10 +7,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 # ================= 配置区 =================
 PROXY = "http://127.0.0.1:7897"
-TOTAL_TASK_LIMIT = 5  # 每次执行程序处理的总任务数（找到5个就停）
+TOTAL_TASK_LIMIT = 5  # 每次执行程序处理的总任务数
 MAX_DOWNLOAD_THREADS = 3  # 下载并发数
 VIEW_THRESHOLD = 200
-MIN_DURATION = 60  # 过滤掉小于60秒的短视频 (Shorts)
+MIN_DURATION = 60  # 过滤掉短视频 (Shorts)
+CONTENT_LIMIT = 1000  # 文本截取字数上限
 WHISPER_MODEL = "base"
 OUTPUT_DIR = "./ytb_contents_ready"
 
@@ -49,7 +50,6 @@ class ConcurrentYTProcessor:
                 f.write(f"{v_id}\n")
 
     def get_videos_to_process(self):
-        """扫描并根据总量限制获取任务"""
         scan_opts = {'proxy': PROXY, 'extract_flat': True, 'quiet': True}
         eligible = []
         url = self.channel_url.split('?')[0].rstrip('/') + '/videos'
@@ -60,7 +60,6 @@ class ConcurrentYTProcessor:
                 result = ydl.extract_info(url, download=False)
                 entries = result.get('entries', [])
                 for entry in entries:
-                    # 达到 5 个任务上限就停止扫描
                     if len(eligible) >= TOTAL_TASK_LIMIT:
                         break
 
@@ -79,33 +78,36 @@ class ConcurrentYTProcessor:
                 return []
 
     def transcribe_task(self, audio_path, info, v_id, v_url):
-        """转录逻辑：单线程顺序执行"""
+        """转录并截取前 1000 字"""
         try:
             print(f"\n[转录队列] 正在处理: {v_id} ... ☕")
-            # fp16=False 适配 CPU 环境，避免警告并提高稳定性
             result = self.model.transcribe(audio_path, fp16=False)
+
+            # --- 核心修改：截取前 1000 字 ---
+            full_text = result["text"].strip()
+            truncated_content = full_text[:CONTENT_LIMIT]
+            if len(full_text) > CONTENT_LIMIT:
+                truncated_content += "..."  # 添加省略号提示
 
             output_data = {
                 "title": info.get('title'),
                 "url": v_url,
-                "content": result["text"].strip()
+                "content": truncated_content
             }
 
             output_filename = os.path.join(self.output_dir, f"content_{v_id}.txt")
             with open(output_filename, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
 
-            # 清理音频文件
             if os.path.exists(audio_path):
                 os.remove(audio_path)
 
             self._save_history(v_id)
-            print(f"✅ 转录完成并存档: {v_id}")
+            print(f"✅ 转录完成(已截取前{CONTENT_LIMIT}字): {v_id}")
         except Exception as e:
             print(f"❌ 转录失败 {v_id}: {e}")
 
     def download_and_queue_transcribe(self, v_tuple):
-        """下载逻辑：多线程并发执行"""
         v_url, v_id = v_tuple
         ydl_opts = {
             'proxy': PROXY,
@@ -122,9 +124,8 @@ class ConcurrentYTProcessor:
                 info = ydl.extract_info(v_url, download=True)
                 audio_path = os.path.join(self.output_dir, f"{v_id}.mp3")
 
-            # 下载完成后，将转录任务送入单线程池排队
             self.transcribe_executor.submit(self.transcribe_task, audio_path, info, v_id, v_url)
-            print(f"📦 下载完成，已送入转录队列: {v_id}")
+            print(f"📦 已送入转录队列: {v_id}")
 
         except Exception as e:
             print(f"❌ 下载失败 {v_id}: {e}")
@@ -132,20 +133,17 @@ class ConcurrentYTProcessor:
     def run(self):
         targets = self.get_videos_to_process()
         if not targets:
-            print("没有发现符合条件的新视频。💤")
+            print("没有新任务。💤")
             return
 
-        print(f"🚀 开始流水线: 总任务数 {len(targets)} | 下载并发 {MAX_DOWNLOAD_THREADS} | 顺序转录")
+        print(f"🚀 开始流水线: 总数 {len(targets)} | 下载并发 {MAX_DOWNLOAD_THREADS}")
 
-        # 1. 使用并发线程池处理下载
         with ThreadPoolExecutor(max_workers=MAX_DOWNLOAD_THREADS) as download_executor:
-            # map 会阻塞直到所有下载任务“提交”完成
             download_executor.map(self.download_and_queue_transcribe, targets)
 
-        # 2. 等待所有转录任务完成
-        print("\n所有视频已下载完成，正在等待队列中的转录任务结束... ⏳")
+        print("\n下载已全部完成，等待转录队列清空... ⏳")
         self.transcribe_executor.shutdown(wait=True)
-        print("\n✨ 本次程序执行完毕，所有任务已处理。")
+        print("\n✨ 任务处理完毕。")
 
 
 if __name__ == "__main__":

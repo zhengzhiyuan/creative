@@ -5,6 +5,8 @@ import yt_dlp
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
+from ent_v2.config import TaskType
+
 # ================= 配置区 =================
 PROXY = "http://127.0.0.1:7897"
 TOTAL_TASK_LIMIT = 5  # 每次执行程序处理的总任务数
@@ -89,21 +91,34 @@ class ConcurrentYTProcessor:
             if len(full_text) > CONTENT_LIMIT:
                 truncated_content += "..."  # 添加省略号提示
 
+            # 1. 创建独立文件夹 (标题前100字符，过滤掉非法路径字符)
+            title = info.get('title', v_id)
+            safe_title = "".join([c for c in title if c.isalnum() or c in (' ', '.', '_', '-')]).strip()
+            folder_name = safe_title[:100]
+            task_folder = os.path.join(self.output_dir, folder_name)
+            os.makedirs(task_folder, exist_ok=True)
+
+            # 2. 输出 txt 内容
             output_data = {
-                "title": info.get('title'),
+                "title": title,
                 "url": v_url,
                 "content": truncated_content
             }
 
-            output_filename = os.path.join(self.output_dir, f"content_{v_id}.txt")
+            output_filename = os.path.join(task_folder, f"content_{v_id}.txt")
             with open(output_filename, "w", encoding="utf-8") as f:
                 json.dump(output_data, f, ensure_ascii=False, indent=2)
+
+            # 3. 增加空白的 script.json
+            script_path = os.path.join(task_folder, "script.json")
+            with open(script_path, "w", encoding="utf-8") as f:
+                f.write("{}")
 
             if os.path.exists(audio_path):
                 os.remove(audio_path)
 
             self._save_history(v_id)
-            print(f"✅ 转录完成(已截取前{CONTENT_LIMIT}字): {v_id}")
+            print(f"✅ 转录完成并存入文件夹: {folder_name}")
         except Exception as e:
             print(f"❌ 转录失败 {v_id}: {e}")
 
@@ -147,6 +162,15 @@ class ConcurrentYTProcessor:
 
 
 if __name__ == "__main__":
-    url = "https://www.youtube.com/@%D0%9D%D0%B8%D0%BA%D0%B0%D0%92%D0%B5%D1%80%D0%BE%D0%BD%D0%B8%D0%BA%D0%B0-%D0%BA7%D1%82/videos"
-    processor = ConcurrentYTProcessor(url, OUTPUT_DIR)
+    # 1. 选定枚举值
+    selected_enum = TaskType.A1
+
+    # 2. 从枚举中提取基础值（在此进行赋值映射，不让 Processor 看到 Enum）
+    t_name, t_url, t_path = selected_enum.value
+
+    # 3. 实例化并运行
+    processor = ConcurrentYTProcessor(
+        channel_url=t_url,
+        output_dir=t_path
+    )
     processor.run()

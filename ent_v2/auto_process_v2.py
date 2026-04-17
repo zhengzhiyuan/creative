@@ -14,6 +14,8 @@ from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips,
 import moviepy.video.fx.all as vfx
 from datetime import datetime
 
+from ent_v2.config import TaskType
+
 # ================= 配置区 =================
 TTS_VOICE = "zh-CN-XiaoxiaoNeural"
 SEARCH_SEMAPHORE = asyncio.Semaphore(2)
@@ -28,12 +30,6 @@ class VideoAutomation:
     def __init__(self, project_name, json_path, output_root, max_download_per_act=3):
         """
         初始化视频自动化处理类
-        
-        Args:
-            project_name: 项目名称
-            json_path: JSON配置文件路径（必需）
-            output_root: 输出根目录（必需）
-            max_download_per_act: 每个场景最大下载数量，默认为3
         """
         self.json_path = json_path
         self.output_root = output_root
@@ -129,7 +125,7 @@ class VideoAutomation:
         return AudioFileClip(path)
 
     def process_clip(self, clip, target_w=TARGET_W, target_h=TARGET_H):
-        y1 = int(clip.h * 0.12)
+        y1 = int(clip.h * 0.10)
         cropped = vfx.crop(clip, x1=0, y1=y1, x2=clip.w, y2=clip.h)
         main_v = cropped.resize(height=target_h).on_color(size=(target_w, target_h), color=(0, 0, 0), pos='center')
         mask_h = int(target_h * 0.18)
@@ -137,17 +133,13 @@ class VideoAutomation:
         return CompositeVideoClip([main_v, mask.set_position(("center", "bottom"))])
 
     def generate_subtitle_clip(self, full_text, total_duration):
-        """优化：将长文本切分成短句，使其与旁白节奏匹配"""
-        # 按标点切分，并过滤空字符串
         sentences = [s.strip() for s in re.split(r'[，。！？；\s]+', full_text) if s.strip()]
         if not sentences: return ColorClip((1, 1), ismask=True).set_duration(total_duration)
 
-        # 根据字数比例分配每句时长
         total_chars = sum(len(s) for s in sentences)
         clips = []
         mask_h = int(TARGET_H * 0.18)
 
-        # 查找字体
         font_paths = ["/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
                       "C:\\Windows\\Fonts\\msyh.ttc"]
         font_path = next((p for p in font_paths if os.path.exists(p)), None)
@@ -155,27 +147,18 @@ class VideoAutomation:
 
         start_time = 0
         for s in sentences:
-            # 计算时长：(本句字数 / 总字数) * 总时长
             duration = (len(s) / total_chars) * total_duration
-
-            # 生成单句图片
             img = Image.new('RGBA', (TARGET_W, mask_h), (0, 0, 0, 0))
             draw = ImageDraw.Draw(img)
-
-            # 居中绘制
             try:
                 w, h = draw.textsize(s, font=font) if hasattr(draw, 'textsize') else (TARGET_W // 2, 22)
             except:
                 w, h = TARGET_W // 2, 22
-
             draw.text(((TARGET_W - w) // 2, (mask_h - h) // 2), s, font=font, fill="white")
-
-            # 创建片段并设置开始时间
             s_clip = ImageClip(np.array(img)).set_duration(duration).set_start(start_time).set_position(
                 ('center', 'bottom'))
             clips.append(s_clip)
             start_time += duration
-
         return CompositeVideoClip(clips, size=(TARGET_W, TARGET_H))
 
     def get_clips(self, folder, target_dur):
@@ -183,13 +166,11 @@ class VideoAutomation:
         v_files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.mp4')]
 
         if not v_files:
-            print(f"⚠️ {folder} 缺素材，借调中...")
             for root, dirs, files in os.walk(self.project_dir):
                 for f in files:
                     if f.endswith(".mp4"): v_files.append(os.path.join(root, f))
 
         if not v_files:
-            print(f"🚨 极端兜底：生成黑底补丁...")
             return [ColorClip(size=(TARGET_W, TARGET_H), color=(20, 20, 20)).set_duration(target_dur)], []
 
         video_cache, opened_vids, curr_dur = {}, [], 0
@@ -211,29 +192,53 @@ class VideoAutomation:
                 continue
         return clips, opened_vids
 
+    def get_interview_clips(self, interview_folder, target_dur):
+        """专门处理采访视频素材的循环补充"""
+        clips = []
+        v_files = [os.path.join(interview_folder, f) for f in os.listdir(interview_folder) if f.endswith('.mp4')]
 
-async def main(json_path, output_root, max_download_per_act=3):
-    """
-    主函数 - 支持动态参数传入
-    
-    Args:
-        json_path: JSON配置文件路径（必需）
-        output_root: 输出根目录（必需）
-        max_download_per_act: 每个场景最大下载数量，默认为3
-    """
-    if not os.path.exists(json_path): 
+        if not v_files:
+            return [], []
+
+        video_cache, opened_vids, curr_dur = {}, [], 0
+        while curr_dur < target_dur:
+            f = random.choice(v_files)
+            try:
+                if f not in video_cache:
+                    video = VideoFileClip(f, audio=True)
+                    video_cache[f] = video
+                    opened_vids.append(video)
+                else:
+                    video = video_cache[f]
+
+                d = min(video.duration - 0.5, random.uniform(10, 20))
+                if (target_dur - curr_dur) < d:
+                    d = target_dur - curr_dur
+
+                start = random.uniform(0, max(0, video.duration - d))
+                sub = video.subclip(start, start + d)
+                clips.append(self.process_clip(sub))
+                curr_dur += d
+            except:
+                break
+        return clips, opened_vids
+
+
+async def main(json_path, output_root, enable_extend=True, target_total_duration=1800, max_download_per_act=3):
+    if not os.path.exists(json_path):
         print(f"⚠️ JSON文件不存在: {json_path}")
         return
-    
+
     with open(json_path, 'r', encoding='utf-8') as f:
         data = json.load(f)
 
     p_name = re.sub(r'[\\/:*?"<>|]', '_', data['extreme_titles'][0][:10])
-    auto = VideoAutomation(p_name, json_path=json_path, 
-                          output_root=output_root,
-                          max_download_per_act=max_download_per_act)
+    auto = VideoAutomation(p_name, json_path=json_path,
+                           output_root=output_root,
+                           max_download_per_act=max_download_per_act)
     all_video_parts, all_resources = [], []
 
+    # 1. 正常的 Script 视频建设
     for act_id, act_info in data['video_script'].items():
         act_path = os.path.join(auto.project_dir, act_id)
         os.makedirs(act_path, exist_ok=True)
@@ -254,17 +259,42 @@ async def main(json_path, output_root, max_download_per_act=3):
 
         if v_clips:
             act_video_stream = concatenate_videoclips(v_clips, method="compose").set_duration(a_clip.duration)
-
-            # 修改点：传入剧本全文，函数内会自动切分匹配时长
             txt_layer = auto.generate_subtitle_clip(act_info['content'], a_clip.duration)
             act_combined = CompositeVideoClip([act_video_stream, txt_layer]).set_audio(a_clip)
             all_video_parts.append(act_combined)
+
+    # 2. 补充采访内容
+    if enable_extend and "protagonist_interview_queries" in data:
+        current_dur = sum(c.duration for c in all_video_parts)
+
+        if current_dur < target_total_duration:
+            needed_dur = target_total_duration - current_dur
+            print(f"🎬 触发时长补充：当前 {current_dur:.1f}s，需补充 {needed_dur:.1f}s")
+
+            interview_path = os.path.join(auto.project_dir, "interview_extend")
+            os.makedirs(interview_path, exist_ok=True)
+
+            interview_urls = await auto.batch_search_bili(data["protagonist_interview_queries"], limit=3)
+            i_tasks = [
+                asyncio.to_thread(auto.download_with_ytdlp_enhanced, url,
+                                  os.path.join(interview_path, f"interview_{i}.mp4"),
+                                  data["protagonist_interview_queries"][0], f"interview_{i}.mp4", interview_path)
+                for i, url in enumerate(interview_urls)
+            ]
+            if i_tasks: await asyncio.gather(*i_tasks)
+
+            i_clips, i_vids = auto.get_interview_clips(interview_path, needed_dur)
+            all_resources.extend(i_vids)
+
+            if i_clips:
+                extend_part = concatenate_videoclips(i_clips, method="compose").set_duration(needed_dur)
+                all_video_parts.append(extend_part)
 
     if all_video_parts:
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_480P.mp4")
         final_v = concatenate_videoclips(all_video_parts, method="compose")
         try:
-            final_v.write_videofile(output_file, fps=24, codec="h264_videotoolbox", audio_codec="aac", threads=4,
+            final_v.write_videofile(output_file, fps=24, codec="h264_videotoolbox", audio_codec="aac", threads=8,
                                     bitrate="1500k")
         finally:
             for res in all_resources:
@@ -275,7 +305,17 @@ async def main(json_path, output_root, max_download_per_act=3):
 
 
 if __name__ == "__main__":
+    # 1. 设置补充行为配置
+    ENABLE_EXTEND = True
+    TARGET_SECONDS = 1800  # 30分钟
+
+    # 2. 从枚举中提取基础值
+    selected_enum = TaskType.A1
+    t_name, t_url, t_path = selected_enum.value
+
     asyncio.run(main(
-        json_path="/path/to/your/config.json",
-        output_root="/path/to/output/directory"
+        json_path=t_path + "/test1/script.json",
+        output_root=t_path +"/test1/output",
+        enable_extend=ENABLE_EXTEND,
+        target_total_duration=TARGET_SECONDS
     ))

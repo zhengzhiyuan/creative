@@ -294,7 +294,7 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_480P.mp4")
         final_v = concatenate_videoclips(all_video_parts, method="compose")
         try:
-            final_v.write_videofile(output_file, fps=24, codec="h264_videotoolbox", audio_codec="aac", threads=8,
+            final_v.write_videofile(output_file, fps=24, codec="h264_videotoolbox", audio_codec="aac", threads=4,
                                     bitrate="1500k")
         finally:
             for res in all_resources:
@@ -313,9 +313,57 @@ if __name__ == "__main__":
     selected_enum = TaskType.A1
     t_name, t_url, t_path = selected_enum.value
 
-    asyncio.run(main(
-        json_path=t_path + "/test1/script.json",
-        output_root=t_path +"/test1/output",
-        enable_extend=ENABLE_EXTEND,
-        target_total_duration=TARGET_SECONDS
-    ))
+    # 3. 遍历 t_path 目录下的所有子目录
+    if os.path.exists(t_path) and os.path.isdir(t_path):
+        for subdir in os.listdir(t_path):
+            subdir_path = os.path.join(t_path, subdir)
+            
+            # 只处理目录
+            if not os.path.isdir(subdir_path):
+                continue
+            
+            script_json_path = os.path.join(subdir_path, "script.json")
+            output_dir = os.path.join(subdir_path, "output")
+            
+            # 检查 script.json 是否存在
+            if not os.path.exists(script_json_path):
+                print(f"⚠️ 跳过 {subdir}: script.json 不存在")
+                continue
+            
+            # 检查 script.json 是否为非空 JSON
+            try:
+                with open(script_json_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if not content:
+                        print(f"⚠️ 跳过 {subdir}: script.json 为空文件")
+                        continue
+                    json_data = json.loads(content)
+                    if not json_data:
+                        print(f"⚠️ 跳过 {subdir}: script.json 是空 JSON")
+                        continue
+            except json.JSONDecodeError as e:
+                print(f"⚠️ 跳过 {subdir}: script.json 格式错误 - {e}")
+                continue
+            except Exception as e:
+                print(f"⚠️ 跳过 {subdir}: 读取 script.json 失败 - {e}")
+                continue
+            
+            # 检查 output 文件夹是否已存在
+            if os.path.exists(output_dir):
+                print(f"⚠️ 跳过 {subdir}: output 文件夹已存在")
+                continue
+            
+            # 满足条件，执行 main 方法
+            print(f"\n🎬 开始处理: {subdir}")
+            try:
+                asyncio.run(main(
+                    json_path=script_json_path,
+                    output_root=output_dir,
+                    enable_extend=ENABLE_EXTEND,
+                    target_total_duration=TARGET_SECONDS
+                ))
+                print(f"✅ 完成处理: {subdir}\n")
+            except Exception as e:
+                print(f"❌ 处理 {subdir} 时出错: {e}\n")
+    else:
+        print(f"⚠️ t_path 目录不存在: {t_path}")

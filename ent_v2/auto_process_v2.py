@@ -263,7 +263,7 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
             act_combined = CompositeVideoClip([act_video_stream, txt_layer]).set_audio(a_clip)
             all_video_parts.append(act_combined)
 
-    # 2. 补充采访内容
+    # 2. 补充采访内容（确保最终视频至少达到目标时长）
     if enable_extend and "protagonist_interview_queries" in data:
         current_dur = sum(c.duration for c in all_video_parts)
 
@@ -289,6 +289,10 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
             if i_clips:
                 extend_part = concatenate_videoclips(i_clips, method="compose").set_duration(needed_dur)
                 all_video_parts.append(extend_part)
+                final_duration = current_dur + needed_dur
+                print(f"✅ 补充完成：最终视频时长约 {final_duration:.1f}s ({final_duration/60:.1f}分钟)")
+        else:
+            print(f"ℹ️ 当前时长 {current_dur:.1f}s 已达到目标，无需补充")
 
     if all_video_parts:
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_480P.mp4")
@@ -304,6 +308,23 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
                     pass
 
 
+async def process_single_subdir(subdir, subdir_path, script_json_path, output_dir, enable_extend, target_seconds):
+    """处理单个子目录的异步任务"""
+    print(f"\n🎬 开始处理: {subdir}")
+    try:
+        await main(
+            json_path=script_json_path,
+            output_root=output_dir,
+            enable_extend=enable_extend,
+            target_total_duration=target_seconds
+        )
+        print(f"✅ 完成处理: {subdir}\n")
+        return True
+    except Exception as e:
+        print(f"❌ 处理 {subdir} 时出错: {e}\n")
+        return False
+
+
 if __name__ == "__main__":
     # 1. 设置补充行为配置
     ENABLE_EXTEND = True
@@ -315,6 +336,9 @@ if __name__ == "__main__":
 
     # 3. 遍历 t_path 目录下的所有子目录
     if os.path.exists(t_path) and os.path.isdir(t_path):
+        # 收集所有需要处理的子目录
+        tasks_to_process = []
+        
         for subdir in os.listdir(t_path):
             subdir_path = os.path.join(t_path, subdir)
             
@@ -353,17 +377,20 @@ if __name__ == "__main__":
                 print(f"⚠️ 跳过 {subdir}: output 文件夹已存在")
                 continue
             
-            # 满足条件，执行 main 方法
-            print(f"\n🎬 开始处理: {subdir}")
-            try:
-                asyncio.run(main(
-                    json_path=script_json_path,
-                    output_root=output_dir,
-                    enable_extend=ENABLE_EXTEND,
-                    target_total_duration=TARGET_SECONDS
-                ))
-                print(f"✅ 完成处理: {subdir}\n")
-            except Exception as e:
-                print(f"❌ 处理 {subdir} 时出错: {e}\n")
+            # 满足条件，添加到待处理列表
+            tasks_to_process.append((subdir, subdir_path, script_json_path, output_dir))
+        
+        # 在同一个事件循环中顺序处理所有任务
+        if tasks_to_process:
+            async def run_all_tasks():
+                for subdir, subdir_path, script_json_path, output_dir in tasks_to_process:
+                    await process_single_subdir(
+                        subdir, subdir_path, script_json_path, output_dir, 
+                        ENABLE_EXTEND, TARGET_SECONDS
+                    )
+            
+            asyncio.run(run_all_tasks())
+        else:
+            print("\n📭 没有需要处理的任务")
     else:
         print(f"⚠️ t_path 目录不存在: {t_path}")

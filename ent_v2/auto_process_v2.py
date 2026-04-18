@@ -7,6 +7,7 @@ import csv
 import yt_dlp
 import edge_tts
 import numpy as np
+import subprocess
 from PIL import Image, ImageDraw, ImageFont
 from playwright.async_api import async_playwright
 from moviepy.editor import VideoFileClip, AudioFileClip, concatenate_videoclips, ColorClip, CompositeVideoClip, \
@@ -28,9 +29,6 @@ TARGET_H = 480
 
 class VideoAutomation:
     def __init__(self, project_name, json_path, output_root, max_download_per_act=3):
-        """
-        初始化视频自动化处理类
-        """
         self.json_path = json_path
         self.output_root = output_root
         self.max_download_per_act = max_download_per_act
@@ -132,44 +130,37 @@ class VideoAutomation:
         mask = ColorClip(size=(target_w, mask_h), color=(0, 0, 0)).set_opacity(0.8).set_duration(clip.duration)
         return CompositeVideoClip([main_v, mask.set_position(("center", "bottom"))])
 
-    def generate_subtitle_clip(self, full_text, total_duration):
+    def generate_srt(self, full_text, total_duration, srt_path):
+        """优化：不再生成 ImageClip 序列，改为生成 SRT 字幕文件"""
         sentences = [s.strip() for s in re.split(r'[，。！？；\s]+', full_text) if s.strip()]
-        if not sentences: return ColorClip((1, 1), ismask=True).set_duration(total_duration)
+        if not sentences: return
 
         total_chars = sum(len(s) for s in sentences)
-        clips = []
-        mask_h = int(TARGET_H * 0.18)
-
-        font_paths = ["/System/Library/Fonts/PingFang.ttc", "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-                      "C:\\Windows\\Fonts\\msyh.ttc"]
-        font_path = next((p for p in font_paths if os.path.exists(p)), None)
-        font = ImageFont.truetype(font_path, 22) if font_path else ImageFont.load_default()
-
         start_time = 0
-        for s in sentences:
-            duration = (len(s) / total_chars) * total_duration
-            img = Image.new('RGBA', (TARGET_W, mask_h), (0, 0, 0, 0))
-            draw = ImageDraw.Draw(img)
-            try:
-                w, h = draw.textsize(s, font=font) if hasattr(draw, 'textsize') else (TARGET_W // 2, 22)
-            except:
-                w, h = TARGET_W // 2, 22
-            draw.text(((TARGET_W - w) // 2, (mask_h - h) // 2), s, font=font, fill="white")
-            s_clip = ImageClip(np.array(img)).set_duration(duration).set_start(start_time).set_position(
-                ('center', 'bottom'))
-            clips.append(s_clip)
-            start_time += duration
-        return CompositeVideoClip(clips, size=(TARGET_W, TARGET_H))
+
+        def format_srt_time(seconds):
+            hrs = int(seconds // 3600)
+            mins = int((seconds % 3600) // 60)
+            secs = int(seconds % 60)
+            msecs = int((seconds - int(seconds)) * 1000)
+            return f"{hrs:02d}:{mins:02d}:{secs:02d},{msecs:03d}"
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            for i, s in enumerate(sentences):
+                duration = (len(s) / total_chars) * total_duration
+                end_time = start_time + duration
+                f.write(f"{i + 1}\n")
+                f.write(f"{format_srt_time(start_time)} --> {format_srt_time(end_time)}\n")
+                f.write(f"{s}\n\n")
+                start_time = end_time
 
     def get_clips(self, folder, target_dur):
         clips = []
         v_files = [os.path.join(folder, f) for f in os.listdir(folder) if f.endswith('.mp4')]
-
         if not v_files:
             for root, dirs, files in os.walk(self.project_dir):
                 for f in files:
                     if f.endswith(".mp4"): v_files.append(os.path.join(root, f))
-
         if not v_files:
             return [ColorClip(size=(TARGET_W, TARGET_H), color=(20, 20, 20)).set_duration(target_dur)], []
 
@@ -193,13 +184,9 @@ class VideoAutomation:
         return clips, opened_vids
 
     def get_interview_clips(self, interview_folder, target_dur):
-        """专门处理采访视频素材的循环补充"""
         clips = []
         v_files = [os.path.join(interview_folder, f) for f in os.listdir(interview_folder) if f.endswith('.mp4')]
-
-        if not v_files:
-            return [], []
-
+        if not v_files: return [], []
         video_cache, opened_vids, curr_dur = {}, [], 0
         while curr_dur < target_dur:
             f = random.choice(v_files)
@@ -210,11 +197,8 @@ class VideoAutomation:
                     opened_vids.append(video)
                 else:
                     video = video_cache[f]
-
                 d = min(video.duration - 0.5, random.uniform(10, 20))
-                if (target_dur - curr_dur) < d:
-                    d = target_dur - curr_dur
-
+                if (target_dur - curr_dur) < d: d = target_dur - curr_dur
                 start = random.uniform(0, max(0, video.duration - d))
                 sub = video.subclip(start, start + d)
                 clips.append(self.process_clip(sub))
@@ -222,6 +206,33 @@ class VideoAutomation:
             except:
                 break
         return clips, opened_vids
+
+    def ffmpeg_render_final(self, video_path, srt_path, output_path):
+        """
+        核心优化点：使用 FFmpeg 滤镜高效渲染字幕和编码
+        """
+        # 字体路径适配
+        font_paths = ["/System/Library/Fonts/PingFang.ttc", "C\\:/Windows/Fonts/msyh.ttc"]
+        font_path = next((p for p in font_paths if os.path.exists(p.replace('\\', ''))), "Arial")
+
+        # 构建 FFmpeg 命令
+        # 使用 subtitles 滤镜直接渲染字幕文件
+        cmd = [
+            'ffmpeg', '-y',
+            '-i', video_path,
+            '-vf', f"subtitles='{srt_path}':force_style='Alignment=2,FontSize=11,FontName=PingFang SC,MarginV=15'",
+            '-c:v', 'h264_videotoolbox',  # 硬件加速
+            '-b:v', '1500k',
+            '-c:a', 'copy',
+            output_path
+        ]
+
+        try:
+            subprocess.run(cmd, check=True)
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"FFmpeg 渲染失败: {e}")
+            return False
 
 
 async def main(json_path, output_root, enable_extend=True, target_total_duration=1800, max_download_per_act=3):
@@ -233,10 +244,10 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
         data = json.load(f)
 
     p_name = re.sub(r'[\\/:*?"<>|]', '_', data['extreme_titles'][0][:10])
-    auto = VideoAutomation(p_name, json_path=json_path,
-                           output_root=output_root,
+    auto = VideoAutomation(p_name, json_path=json_path, output_root=output_root,
                            max_download_per_act=max_download_per_act)
     all_video_parts, all_resources = [], []
+    full_script_content = ""
 
     # 1. 正常的 Script 视频建设
     for act_id, act_info in data['video_script'].items():
@@ -259,47 +270,57 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
 
         if v_clips:
             act_video_stream = concatenate_videoclips(v_clips, method="compose").set_duration(a_clip.duration)
-            txt_layer = auto.generate_subtitle_clip(act_info['content'], a_clip.duration)
-            act_combined = CompositeVideoClip([act_video_stream, txt_layer]).set_audio(a_clip)
+            act_combined = act_video_stream.set_audio(a_clip)
             all_video_parts.append(act_combined)
+            full_script_content += act_info['content'] + " "
 
-    # 2. 补充采访内容（确保最终视频至少达到目标时长）
+    # 2. 补充采访内容
+    current_script_dur = sum(c.duration for c in all_video_parts)
     if enable_extend and "protagonist_interview_queries" in data:
-        current_dur = sum(c.duration for c in all_video_parts)
-
-        if current_dur < target_total_duration:
-            needed_dur = target_total_duration - current_dur
-            print(f"🎬 触发时长补充：当前 {current_dur:.1f}s，需补充 {needed_dur:.1f}s")
-
+        if current_script_dur < target_total_duration:
+            needed_dur = target_total_duration - current_script_dur
+            print(f"🎬 时长补充：当前 {current_script_dur:.1f}s，需补充 {needed_dur:.1f}s")
             interview_path = os.path.join(auto.project_dir, "interview_extend")
             os.makedirs(interview_path, exist_ok=True)
-
             interview_urls = await auto.batch_search_bili(data["protagonist_interview_queries"], limit=3)
-            i_tasks = [
-                asyncio.to_thread(auto.download_with_ytdlp_enhanced, url,
-                                  os.path.join(interview_path, f"interview_{i}.mp4"),
-                                  data["protagonist_interview_queries"][0], f"interview_{i}.mp4", interview_path)
-                for i, url in enumerate(interview_urls)
-            ]
+            i_tasks = [asyncio.to_thread(auto.download_with_ytdlp_enhanced, url,
+                                         os.path.join(interview_path, f"interview_{i}.mp4"),
+                                         data["protagonist_interview_queries"][0], f"interview_{i}.mp4", interview_path)
+                       for i, url in enumerate(interview_urls)]
             if i_tasks: await asyncio.gather(*i_tasks)
-
             i_clips, i_vids = auto.get_interview_clips(interview_path, needed_dur)
             all_resources.extend(i_vids)
-
             if i_clips:
                 extend_part = concatenate_videoclips(i_clips, method="compose").set_duration(needed_dur)
                 all_video_parts.append(extend_part)
-                final_duration = current_dur + needed_dur
-                print(f"✅ 补充完成：最终视频时长约 {final_duration:.1f}s ({final_duration/60:.1f}分钟)")
-        else:
-            print(f"ℹ️ 当前时长 {current_dur:.1f}s 已达到目标，无需补充")
 
     if all_video_parts:
+        temp_video = os.path.join(auto.project_dir, "TEMP_NO_SUB.mp4")
+        srt_file = os.path.join(auto.project_dir, "subtitles.srt")
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_480P.mp4")
-        final_v = concatenate_videoclips(all_video_parts, method="compose")
+
+        # 合并视频流（这一步由 MoviePy 完成拼接，但不进行复杂的图层叠加）
+        final_concat = concatenate_videoclips(all_video_parts, method="compose")
+
+        # 生成 SRT 字幕文件（仅针对前段有脚本的部分）
+        auto.generate_srt(full_script_content, current_script_dur, srt_file)
+
         try:
-            final_v.write_videofile(output_file, fps=24, codec="h264_videotoolbox", audio_codec="aac", threads=4,
-                                    bitrate="1500k")
+            # 第一步：快速导出无字幕视频
+            print("🚀 正在导出基础视频流...")
+            final_concat.write_videofile(temp_video, fps=24, codec="h264_videotoolbox", audio_codec="aac",
+                                         bitrate="2000k")
+
+            # 第二步：使用 FFmpeg 快速烧录字幕
+            if os.path.exists(srt_file):
+                print("📝 正在使用 FFmpeg 烧录字幕...")
+                auto.ffmpeg_render_final(temp_video, srt_file, output_file)
+                if os.path.exists(output_file):
+                    os.remove(temp_video)  # 清理中间文件
+            else:
+                os.rename(temp_video, output_file)
+
+            print(f"✅ 视频制作完成: {output_file}")
         finally:
             for res in all_resources:
                 try:
@@ -309,88 +330,38 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
 
 
 async def process_single_subdir(subdir, subdir_path, script_json_path, output_dir, enable_extend, target_seconds):
-    """处理单个子目录的异步任务"""
     print(f"\n🎬 开始处理: {subdir}")
     try:
-        await main(
-            json_path=script_json_path,
-            output_root=output_dir,
-            enable_extend=enable_extend,
-            target_total_duration=target_seconds
-        )
-        print(f"✅ 完成处理: {subdir}\n")
+        await main(json_path=script_json_path, output_root=output_dir, enable_extend=enable_extend,
+                   target_total_duration=target_seconds)
         return True
     except Exception as e:
-        print(f"❌ 处理 {subdir} 时出错: {e}\n")
+        print(f"❌ 处理出错: {e}")
         return False
 
 
 if __name__ == "__main__":
-    # 1. 设置补充行为配置
     ENABLE_EXTEND = True
-    TARGET_SECONDS = 1800  # 30分钟
-
-    # 2. 从枚举中提取基础值
+    TARGET_SECONDS = 1800
     selected_enum = TaskType.A1
     t_name, t_url, t_path = selected_enum.value
 
-    # 3. 遍历 t_path 目录下的所有子目录
     if os.path.exists(t_path) and os.path.isdir(t_path):
-        # 收集所有需要处理的子目录
         tasks_to_process = []
-        
         for subdir in os.listdir(t_path):
             subdir_path = os.path.join(t_path, subdir)
-            
-            # 只处理目录
-            if not os.path.isdir(subdir_path):
-                continue
-            
+            if not os.path.isdir(subdir_path): continue
             script_json_path = os.path.join(subdir_path, "script.json")
             output_dir = os.path.join(subdir_path, "output")
-            
-            # 检查 script.json 是否存在
-            if not os.path.exists(script_json_path):
-                print(f"⚠️ 跳过 {subdir}: script.json 不存在")
-                continue
-            
-            # 检查 script.json 是否为非空 JSON
-            try:
-                with open(script_json_path, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                    if not content:
-                        print(f"⚠️ 跳过 {subdir}: script.json 为空文件")
-                        continue
-                    json_data = json.loads(content)
-                    if not json_data:
-                        print(f"⚠️ 跳过 {subdir}: script.json 是空 JSON")
-                        continue
-            except json.JSONDecodeError as e:
-                print(f"⚠️ 跳过 {subdir}: script.json 格式错误 - {e}")
-                continue
-            except Exception as e:
-                print(f"⚠️ 跳过 {subdir}: 读取 script.json 失败 - {e}")
-                continue
-            
-            # 检查 output 文件夹是否已存在
-            if os.path.exists(output_dir):
-                print(f"⚠️ 跳过 {subdir}: output 文件夹已存在")
-                continue
-            
-            # 满足条件，添加到待处理列表
+            if not os.path.exists(script_json_path): continue
+            if os.path.exists(output_dir): continue
             tasks_to_process.append((subdir, subdir_path, script_json_path, output_dir))
-        
-        # 在同一个事件循环中顺序处理所有任务
+
         if tasks_to_process:
             async def run_all_tasks():
                 for subdir, subdir_path, script_json_path, output_dir in tasks_to_process:
-                    await process_single_subdir(
-                        subdir, subdir_path, script_json_path, output_dir, 
-                        ENABLE_EXTEND, TARGET_SECONDS
-                    )
-            
+                    await process_single_subdir(subdir, subdir_path, script_json_path, output_dir, ENABLE_EXTEND,
+                                                TARGET_SECONDS)
+
+
             asyncio.run(run_all_tasks())
-        else:
-            print("\n📭 没有需要处理的任务")
-    else:
-        print(f"⚠️ t_path 目录不存在: {t_path}")

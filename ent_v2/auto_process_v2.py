@@ -32,7 +32,8 @@ class VideoAutomation:
         self.json_path = json_path
         self.output_root = output_root
         self.max_download_per_act = max_download_per_act
-        self.project_dir = os.path.join(self.output_root, f"{project_name}_{datetime.now().strftime('%m%d_%H%M')}")
+        self.project_dir = os.path.abspath(
+            os.path.join(self.output_root, f"{project_name}_{datetime.now().strftime('%m%d_%H%M')}"))
         os.makedirs(self.project_dir, exist_ok=True)
 
     def save_to_csv(self, data, act_path):
@@ -123,6 +124,7 @@ class VideoAutomation:
         return AudioFileClip(path)
 
     def process_clip(self, clip, target_w=TARGET_W, target_h=TARGET_H):
+        """带有遮罩和裁剪的主视频逻辑"""
         y1 = int(clip.h * 0.10)
         cropped = vfx.crop(clip, x1=0, y1=y1, x2=clip.w, y2=clip.h)
         main_v = cropped.resize(height=target_h).on_color(size=(target_w, target_h), color=(0, 0, 0), pos='center')
@@ -130,8 +132,11 @@ class VideoAutomation:
         mask = ColorClip(size=(target_w, mask_h), color=(0, 0, 0)).set_opacity(0.8).set_duration(clip.duration)
         return CompositeVideoClip([main_v, mask.set_position(("center", "bottom"))])
 
+    def simple_process_clip(self, clip, target_w=TARGET_W, target_h=TARGET_H):
+        """填充时长视频专用：仅缩放对齐，不加遮罩，不加任何特效处理"""
+        return clip.resize(height=target_h).on_color(size=(target_w, target_h), color=(0, 0, 0), pos='center')
+
     def generate_srt(self, full_text, total_duration, srt_path):
-        """优化：不再生成 ImageClip 序列，改为生成 SRT 字幕文件"""
         sentences = [s.strip() for s in re.split(r'[，。！？；\s]+', full_text) if s.strip()]
         if not sentences: return
 
@@ -184,6 +189,7 @@ class VideoAutomation:
         return clips, opened_vids
 
     def get_interview_clips(self, interview_folder, target_dur):
+        """修复逻辑：使用 simple_process_clip，不带任何蒙层"""
         clips = []
         v_files = [os.path.join(interview_folder, f) for f in os.listdir(interview_folder) if f.endswith('.mp4')]
         if not v_files: return [], []
@@ -201,37 +207,34 @@ class VideoAutomation:
                 if (target_dur - curr_dur) < d: d = target_dur - curr_dur
                 start = random.uniform(0, max(0, video.duration - d))
                 sub = video.subclip(start, start + d)
-                clips.append(self.process_clip(sub))
+                # 使用 simple_process_clip 替换 process_clip
+                clips.append(self.simple_process_clip(sub))
                 curr_dur += d
             except:
                 break
         return clips, opened_vids
 
     def ffmpeg_render_final(self, video_path, srt_path, output_path):
-        """
-        核心优化点：使用 FFmpeg 滤镜高效渲染字幕和编码
-        """
-        # 字体路径适配
-        font_paths = ["/System/Library/Fonts/PingFang.ttc", "C\\:/Windows/Fonts/msyh.ttc"]
-        font_path = next((p for p in font_paths if os.path.exists(p.replace('\\', ''))), "Arial")
+        abs_srt_path = os.path.abspath(srt_path).replace("\\", "/").replace(":", "\\:")
+        font_name = "PingFang SC"
+        filter_str = f"subtitles='{abs_srt_path}':force_style='Alignment=2,FontSize=12,FontName={font_name},MarginV=18,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,Outline=1'"
 
-        # 构建 FFmpeg 命令
-        # 使用 subtitles 滤镜直接渲染字幕文件
         cmd = [
             'ffmpeg', '-y',
             '-i', video_path,
-            '-vf', f"subtitles='{srt_path}':force_style='Alignment=2,FontSize=11,FontName=PingFang SC,MarginV=15'",
-            '-c:v', 'h264_videotoolbox',  # 硬件加速
-            '-b:v', '1500k',
+            '-vf', filter_str,
+            '-c:v', 'h264_videotoolbox',
+            '-b:v', '2000k',
             '-c:a', 'copy',
             output_path
         ]
 
         try:
-            subprocess.run(cmd, check=True)
+            print(f"🎬 执行 FFmpeg 命令: {' '.join(cmd)}")
+            subprocess.run(cmd, capture_output=True, text=True, check=True)
             return True
         except subprocess.CalledProcessError as e:
-            print(f"FFmpeg 渲染失败: {e}")
+            print(f"❌ FFmpeg 渲染失败! 错误信息:\n{e.stderr}")
             return False
 
 
@@ -249,7 +252,7 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
     all_video_parts, all_resources = [], []
     full_script_content = ""
 
-    # 1. 正常的 Script 视频建设
+    # 1. 正常的 Script 视频建设 (带遮罩和字幕)
     for act_id, act_info in data['video_script'].items():
         act_path = os.path.join(auto.project_dir, act_id)
         os.makedirs(act_path, exist_ok=True)
@@ -274,7 +277,7 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
             all_video_parts.append(act_combined)
             full_script_content += act_info['content'] + " "
 
-    # 2. 补充采访内容
+    # 2. 补充采访内容 (逻辑修复：不带遮罩)
     current_script_dur = sum(c.duration for c in all_video_parts)
     if enable_extend and "protagonist_interview_queries" in data:
         if current_script_dur < target_total_duration:
@@ -299,28 +302,27 @@ async def main(json_path, output_root, enable_extend=True, target_total_duration
         srt_file = os.path.join(auto.project_dir, "subtitles.srt")
         output_file = os.path.join(auto.project_dir, "FINAL_VIDEO_480P.mp4")
 
-        # 合并视频流（这一步由 MoviePy 完成拼接，但不进行复杂的图层叠加）
         final_concat = concatenate_videoclips(all_video_parts, method="compose")
 
-        # 生成 SRT 字幕文件（仅针对前段有脚本的部分）
+        # 核心逻辑修复：生成 SRT 只传入前段脚本的时长。这样 FFmpeg 渲染时，后段填充视频会自动因为没有匹配的时间轴而不显示字幕。
         auto.generate_srt(full_script_content, current_script_dur, srt_file)
 
         try:
-            # 第一步：快速导出无字幕视频
-            print("🚀 正在导出基础视频流...")
+            print("🚀 正在导出基础视频流 (无字幕)...")
             final_concat.write_videofile(temp_video, fps=24, codec="h264_videotoolbox", audio_codec="aac",
                                          bitrate="2000k")
 
-            # 第二步：使用 FFmpeg 快速烧录字幕
             if os.path.exists(srt_file):
-                print("📝 正在使用 FFmpeg 烧录字幕...")
-                auto.ffmpeg_render_final(temp_video, srt_file, output_file)
-                if os.path.exists(output_file):
-                    os.remove(temp_video)  # 清理中间文件
+                print("📝 正在调用 FFmpeg 烧录字幕 (仅限脚本部分)...")
+                success = auto.ffmpeg_render_final(temp_video, srt_file, output_file)
+                if success and os.path.exists(output_file):
+                    if os.path.exists(temp_video): os.remove(temp_video)
+                else:
+                    os.rename(temp_video, output_file)
             else:
                 os.rename(temp_video, output_file)
 
-            print(f"✅ 视频制作完成: {output_file}")
+            print(f"✅ 处理完成: {output_file}")
         finally:
             for res in all_resources:
                 try:
@@ -336,14 +338,14 @@ async def process_single_subdir(subdir, subdir_path, script_json_path, output_di
                    target_total_duration=target_seconds)
         return True
     except Exception as e:
-        print(f"❌ 处理出错: {e}")
+        print(f"❌ 程序运行崩溃: {e}")
         return False
 
 
 if __name__ == "__main__":
     ENABLE_EXTEND = True
     TARGET_SECONDS = 1800
-    selected_enum = TaskType.A1
+    selected_enum = TaskType.A4
     t_name, t_url, t_path = selected_enum.value
 
     if os.path.exists(t_path) and os.path.isdir(t_path):

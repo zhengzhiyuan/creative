@@ -247,8 +247,48 @@ if __name__ == "__main__":
     async def run_tasks():
         for subdir in os.listdir(t_path):
             p = os.path.join(t_path, subdir)
-            if os.path.isdir(p) and os.path.exists(os.path.join(p, "script.json")):
-                await main(os.path.join(p, "script.json"), os.path.join(p, "output"), True, TARGET_SECONDS)
+            
+            # 只处理目录
+            if not os.path.isdir(p):
+                continue
+            
+            script_json_path = os.path.join(p, "script.json")
+            output_dir = os.path.join(p, "output")
+            
+            # 条件1: 检查 output 文件夹是否已存在
+            if os.path.exists(output_dir):
+                print(f"⚠️ 跳过 {subdir}: output 文件夹已存在")
+                continue
+            
+            # 条件2: 检查 script.json 是否存在且不是空 JSON
+            if not os.path.exists(script_json_path):
+                print(f"⚠️ 跳过 {subdir}: script.json 不存在")
+                continue
+            
+            try:
+                with open(script_json_path, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                    if not content:
+                        print(f"⚠️ 跳过 {subdir}: script.json 为空文件")
+                        continue
+                    json_data = json.loads(content)
+                    if not json_data:
+                        print(f"⚠️ 跳过 {subdir}: script.json 是空 JSON")
+                        continue
+            except json.JSONDecodeError as e:
+                print(f"⚠️ 跳过 {subdir}: script.json 格式错误 - {e}")
+                continue
+            except Exception as e:
+                print(f"⚠️ 跳过 {subdir}: 读取 script.json 失败 - {e}")
+                continue
+            
+            # 满足所有条件，执行 main
+            print(f"\n🎬 开始处理: {subdir}")
+            try:
+                await main(script_json_path, output_dir, True, TARGET_SECONDS)
+                print(f"✅ 完成处理: {subdir}\n")
+            except Exception as e:
+                print(f"❌ 处理 {subdir} 时出错: {e}\n")
 
 
     asyncio.run(run_tasks())
